@@ -4,6 +4,13 @@
   "version": "0.5.0",
   "description": "DataFeel circadian phase topology. Maps host-clock elapsed seconds to a fractional phase position within the circadian cycle using a declared period. The gate computes the ratio; the Generator does not.",
 
+  "persistence": {
+    "process_entry": "DataFeel circadian test fixture. The evaluation window opens onto an ongoing circadian process. Each admitted sample is drawn from a linear sweep generator that simulates time elapsed within a single circadian period. No prior relational result from a previous sweep iteration is available at this initialization. The first admitted observation begins the evaluation record, not the physical circadian process.",
+    "prior_evidence": "open",
+    "prior_evidence_refs": [],
+    "persistence_path": ["A_persistence", "B_persistence", "R_persistence"]
+  },
+
   "inputs": [
     {
       "name": "elapsed_s",

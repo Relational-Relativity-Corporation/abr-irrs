@@ -224,6 +224,22 @@ pub struct ContinuousProcessReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub persistence_path: Vec<String>,
 
+    /// Whether the declared persistence operator path is valid.
+    ///
+    /// `true` when `persistence_path` is exactly
+    /// `["A_persistence", "B_persistence", "R_persistence"]` in that order.
+    /// `false` when the path is absent, incomplete, or in the wrong order.
+    pub persistence_path_valid: bool,
+
+    /// If `persistence_path_valid` is false, the reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persistence_path_validation_note: Option<String>,
+
+    /// Count of traceable evidence references supplied for the prior evidence claim.
+    ///
+    /// Zero when `prior_evidence: open` or when `available` was claimed without refs.
+    pub prior_evidence_refs_count: usize,
+
     /// OPEN conditions arising from the continuous-process evaluation.
     ///
     /// An OPEN condition means a relational dependency exists but cannot be

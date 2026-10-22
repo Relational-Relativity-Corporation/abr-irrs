@@ -196,11 +196,22 @@ pub struct PersistenceDeclaration {
     ///   been declared. PROHIBITED. The evaluator fails the declaration.
     pub prior_evidence: PriorEvidenceStatus,
 
+    /// Traceable references to the prior relational evidence.
+    ///
+    /// Required when `prior_evidence: Available`. An availability claim without
+    /// traceable references cannot be independently assessed; the evaluator
+    /// downgrades it to OPEN.
+    ///
+    /// A descriptive assertion in `process_entry` does NOT substitute for
+    /// structured evidence references. Only this field is checked.
+    #[serde(default)]
+    pub prior_evidence_refs: Vec<EvidenceRef>,
+
     /// The Kernel V8 persistence operator path declared by the submitter.
     ///
     /// Must list the operators that will be applied in sequence. For Kernel V8
-    /// compliance the path must include all three stages:
-    /// `["A_persistence", "B_persistence", "R_persistence"]`.
+    /// compliance the path must be exactly:
+    /// `["A_persistence", "B_persistence", "R_persistence"]` in that order.
     pub persistence_path: Vec<String>,
 }
 

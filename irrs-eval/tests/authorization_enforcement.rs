@@ -123,7 +123,16 @@ fn test_mismatched_digest_rejected() {
         topology_id: "digest_topology".to_string(),
         version:     "0.0.1".to_string(),
         description: Some("Declaration that passes.".to_string()),
-        persistence: None,
+        persistence: Some(irrs_eval::declaration::PersistenceDeclaration {
+            process_entry: "digest test — continuous process, evaluation window opens onto ongoing process.".to_string(),
+            prior_evidence: irrs_eval::declaration::PriorEvidenceStatus::Open,
+            prior_evidence_refs: vec![],
+            persistence_path: vec![
+                "A_persistence".to_string(),
+                "B_persistence".to_string(),
+                "R_persistence".to_string(),
+            ],
+        }),
         inputs: vec![
             irrs_eval::declaration::InputDeclaration {
                 name:                  "y".to_string(),
@@ -210,7 +219,16 @@ fn test_verified_without_evidence_flagged() {
         topology_id: "provenance_topology".to_string(),
         version:     "0.0.1".to_string(),
         description: Some("Declaration with inconsistent provenance claim.".to_string()),
-        persistence: None,
+        persistence: Some(irrs_eval::declaration::PersistenceDeclaration {
+            process_entry: "provenance test — continuous process, evaluation window opens onto ongoing process.".to_string(),
+            prior_evidence: irrs_eval::declaration::PriorEvidenceStatus::Open,
+            prior_evidence_refs: vec![],
+            persistence_path: vec![
+                "A_persistence".to_string(),
+                "B_persistence".to_string(),
+                "R_persistence".to_string(),
+            ],
+        }),
         inputs: vec![
             InputDeclaration {
                 name:                  "sensor_reading".to_string(),

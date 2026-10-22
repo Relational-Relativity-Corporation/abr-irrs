@@ -113,7 +113,8 @@ fn test_nonzero_initial_observation_admitted() {
                  The actuator has been operating before the evaluation record begins. \
                  The first admitted observation is actual sensor data from v_out; \
                  it begins the evaluation record, not the physical process.".to_string(),
-            prior_evidence: PriorEvidenceStatus::Available,
+            prior_evidence: PriorEvidenceStatus::Open,
+            prior_evidence_refs: vec![],
             persistence_path: kernel_v8_persistence_path(),
         }),
         inputs: vec![
@@ -146,12 +147,13 @@ fn test_nonzero_initial_observation_admitted() {
 
     assert!(cp.process_entry_declared, "process_entry_declared must be true");
     assert_eq!(
-        cp.prior_evidence, PriorEvidenceReport::Available,
-        "prior_evidence must be Available when declared as such"
+        cp.prior_evidence, PriorEvidenceReport::Open,
+        "prior_evidence must be Open: no prior_evidence_refs supplied so claim is OPEN"
     );
+    // OPEN is expected — one condition for the unavailable prior.
     assert!(
-        cp.open_conditions.is_empty(),
-        "No OPEN conditions expected when prior evidence is available"
+        !cp.open_conditions.is_empty(),
+        "OPEN condition expected when prior evidence has no refs"
     );
     assert_eq!(
         cp.persistence_path,
@@ -187,7 +189,8 @@ fn test_observed_zero_admissible() {
                  Sensor at v_out reads 0.0 — the actuator output happens to be \
                  at rest at this instant. This is an actual observed value acquired \
                  from the physical sensor, not a fabricated zero used as initialization.".to_string(),
-            prior_evidence: PriorEvidenceStatus::Available,
+            prior_evidence: PriorEvidenceStatus::Open,
+            prior_evidence_refs: vec![],
             persistence_path: kernel_v8_persistence_path(),
         }),
         inputs: vec![
@@ -236,13 +239,14 @@ fn test_observed_zero_admissible() {
 
     assert!(cp.process_entry_declared, "process_entry_declared must be true");
     assert_eq!(
-        cp.prior_evidence, PriorEvidenceReport::Available,
-        "prior_evidence must be Available; observed zeros do not constitute \
-         synthetic initialization"
+        cp.prior_evidence, PriorEvidenceReport::Open,
+        "prior_evidence must be Open: no prior_evidence_refs supplied so claim is OPEN. \
+         An observed sensor zero does not constitute synthetic initialization."
     );
+    // OPEN is expected — the prior relational result is unavailable, not the sensor reading.
     assert!(
-        cp.open_conditions.is_empty(),
-        "No OPEN conditions expected for an actual observed zero"
+        !cp.open_conditions.is_empty(),
+        "OPEN condition expected when prior evidence has no refs"
     );
 
     // All inputs must be classified as PrimaryObservable — including the one
@@ -288,6 +292,7 @@ fn test_missing_prior_evidence_reported_as_open() {
                  No prior relational result from a previous evaluation cycle is available. \
                  The prior relational evidence is OPEN.".to_string(),
             prior_evidence: PriorEvidenceStatus::Open,
+            prior_evidence_refs: vec![],
             persistence_path: kernel_v8_persistence_path(),
         }),
         inputs: vec![
@@ -372,6 +377,7 @@ fn test_synthetic_initialization_rejected() {
                  This is prohibited under the Continuous Relational Process Rule.".to_string(),
             // PROHIBITED: synthetic prior declared.
             prior_evidence: PriorEvidenceStatus::Synthetic,
+            prior_evidence_refs: vec![],
             persistence_path: kernel_v8_persistence_path(),
         }),
         inputs: vec![
