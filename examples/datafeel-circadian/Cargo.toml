@@ -1,0 +1,18 @@
+[package]
+name = "datafeel-circadian"
+version = "0.5.0"
+edition = "2021"
+description = "DataFeel circadian example for IRRS — demonstrates the relational gate with a circadian phase topology. This is an example application, not a library."
+
+[[bin]]
+name = "datafeel-circadian"
+path = "src/main.rs"
+
+[dependencies]
+# The example depends on the general-purpose enforcement gate
+# and the frozen domain kernel. It does not depend on any prior
+# irrs-admission layer.
+relational-gate = { path = "../../relational-gate" }
+irrs-kernel     = { path = "../../irrs-kernel" }
+
+# No other dependencies without Origin declaration.

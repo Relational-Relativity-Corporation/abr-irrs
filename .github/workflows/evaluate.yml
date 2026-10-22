@@ -3,6 +3,8 @@ name: Declaration Evaluation
 # Runs on every push and pull request.
 #
 # Job 1 (evaluate): Always runs. Produces an evaluation record.
+#   - Reads the declaration from examples/datafeel-circadian/eval/declaration.json
+#     via: cargo run -p irrs-eval -- evaluate --declaration <path> --output eval/record.json
 #   - If no eval/authorization.json: uploads record as artifact, holds build.
 #   - If eval/authorization.json present and record_id matches: proceeds.
 #   - If evaluation fails (missing prerequisites): fails immediately.
@@ -14,6 +16,10 @@ name: Declaration Evaluation
 #   2. Review eval/record.json (see eval/README.md).
 #   3. Commit eval/authorization.json with the matching record_id.
 #   4. Push — the next run will proceed to build.
+#
+# To evaluate a different declaration, pass --declaration <path> to irrs-eval.
+# irrs-eval does not contain application-specific code; the declaration is
+# the only domain-specific input.
 
 on:
   push:
@@ -50,7 +56,10 @@ jobs:
         # Exit code 0 = authorized, 1 = failed, 2 = awaiting authorization.
         # We capture the record regardless and let the next step interpret status.
         run: |
-          cargo run -p irrs-eval > eval/record.json 2>eval/eval.log
+          cargo run -p irrs-eval -- evaluate \
+            --declaration examples/datafeel-circadian/eval/declaration.json \
+            --output eval/record.json \
+            2>eval/eval.log
           echo "exit_code=$?" >> $GITHUB_OUTPUT
           cat eval/eval.log >&2
         continue-on-error: true
@@ -119,5 +128,5 @@ jobs:
       - name: Test
         run: cargo test
 
-      - name: Run DataFeel circadian sweep
-        run: cargo run -p datafeel-v05
+      - name: Run DataFeel circadian example
+        run: cargo run -p datafeel-circadian

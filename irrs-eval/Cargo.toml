@@ -2,13 +2,12 @@
 name = "irrs-eval"
 version = "0.1.0"
 edition = "2021"
-description = "Pre-build declaration evaluator for IRRS. Runs before gate submission; identifies observables, verifies prerequisites, produces a record for Origin review."
+description = "Domain-independent pre-build declaration evaluator for IRRS. Accepts declarations via JSON file; identifies inputs, verifies prerequisites, produces a record for Origin review."
 
 [[bin]]
 name = "irrs-eval"
 path = "src/main.rs"
 
 [dependencies]
-relational-gate = { path = "../relational-gate" }
 serde      = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }

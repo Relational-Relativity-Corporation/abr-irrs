@@ -5,6 +5,7 @@
 /// Origin commits `eval/authorization.json` to authorize the build.
 
 use serde::{Serialize, Deserialize};
+use crate::provenance::ProvenanceSummary;
 
 // ── Top-level record ─────────────────────────────────────────────────────────
 
@@ -18,14 +19,18 @@ pub struct EvaluationRecord {
     pub topology_id: String,
     pub version: String,
 
-    /// Classification of every value in the declaration.
-    pub observable_inventory: Vec<InventoryItem>,
+    /// Classification and provenance of every input in the declaration.
+    /// Includes values submitted to the gate AND values the gate produces.
+    pub input_inventory: Vec<InventoryItem>,
+
+    /// Aggregated view of provenance status across all inputs.
+    pub provenance_summary: ProvenanceSummary,
 
     /// Verification of the Regional M prerequisite.
     pub regional_prerequisite: PrerequisiteReport,
 
-    /// Trace of every authorized mapping: what goes in, what comes out,
-    /// what is preserved, what is discarded, and who executes it.
+    /// Trace of every authorized mapping: inputs, outputs, what is preserved,
+    /// what is discarded, and who executes it.
     pub mapping_chain: Vec<MappingChainEntry>,
 
     /// Result of the evaluation.
@@ -38,40 +43,76 @@ pub struct EvaluationRecord {
     /// Present only after Origin commits eval/authorization.json and CI re-runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization: Option<OriginAuthorization>,
+
+    /// Evaluator observations — inconsistencies, provenance gaps, or informational
+    /// notes not severe enough to fail evaluation. Reviewed by Origin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluation_notes: Vec<String>,
 }
 
-// ── Observable inventory ─────────────────────────────────────────────────────
+// ── Input inventory ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InventoryItem {
     pub name: String,
 
-    /// Classification of this value.
-    pub kind: InventoryKind,
+    /// Classification from the declaration.
+    pub classification: InventoryKind,
 
-    /// Where the value originates: sensor ID, config key, derived expression.
-    pub source: String,
+    /// Source identity from the declaration.
+    pub source_identity: String,
 
-    /// Plain-language statement of physical basis (or lack thereof).
-    pub physical_basis: String,
+    /// Acquisition or generation method.
+    pub acquisition_method: String,
 
-    /// Whether this value appears in the DeclarationPackage submitted to the gate.
-    /// DerivedValues are produced by the gate; the Generator does not submit them.
+    /// Relationship to the declared problem space.
+    pub relationship_to_problem: String,
+
+    /// Transformation history, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transformation_history: Option<String>,
+
+    /// Number of supporting evidence references supplied.
+    pub evidence_count: usize,
+
+    /// Known limitations from the declaration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_limitations: Option<String>,
+
+    /// Provenance status from the declaration.
+    pub provenance_status: crate::declaration::ProvenanceStatus,
+
+    /// Evaluator's observation about this input's provenance.
+    pub provenance_note: String,
+
+    /// Whether this value is submitted by the Generator in its DeclarationPackage.
     pub submitted_to_gate: bool,
 }
 
+/// Five classifications describing the observational basis of an input.
+///
+/// These describe provenance. They do not independently determine whether
+/// an operator can execute.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InventoryKind {
-    /// Comes directly from a physical sensor or measurement instrument.
+    /// An input supported by an identified observational acquisition process.
     PrimaryObservable,
-    /// A declared constant or configuration value; not sensed from the environment.
+
+    /// A value supplied as a declared configuration or reference.
     DeclaredParameter,
-    /// Computed from observables and parameters by an authorized mapping.
-    /// The gate produces this value; the Generator does not.
+
+    /// A value produced through an identified transformation of other inputs.
+    /// The gate produces this; the Generator does not submit it.
     DerivedValue,
+
+    /// A value generated within a declared simulation or test fixture.
+    SimulatedInput,
+
+    /// A conceptual or stipulated value without a demonstrated observational basis.
+    AbstractInput,
 }
 
-// ── Regional M prerequisite report ──────────────────────────────────────────
+// ── Regional M prerequisite report ───────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrerequisiteReport {
@@ -90,7 +131,7 @@ pub struct PrerequisiteReport {
     pub interior_locus_verified: bool,
 }
 
-// ── Mapping chain ────────────────────────────────────────────────────────────
+// ── Mapping chain ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MappingChainEntry {
@@ -103,7 +144,7 @@ pub struct MappingChainEntry {
     pub executor: String,
 }
 
-// ── Evaluation status ────────────────────────────────────────────────────────
+// ── Evaluation status ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,150 +1,183 @@
-/// irrs-eval binary entry point.
+/// irrs-eval binary.
 ///
-/// Evaluates the DataFeel circadian declaration, checks for an existing
-/// eval/authorization.json, and writes the record to stdout as JSON.
+/// Domain-independent pre-build declaration evaluator.
+/// Reads a declaration from a JSON file; writes the evaluation record to a JSON file.
 ///
-/// Exit codes (consumed by the GitHub workflow):
+/// Usage:
+///   irrs-eval evaluate --declaration <path> [--output <path>] [--auth <path>]
+///
+/// Flags:
+///   --declaration <path>  Required. Path to the declaration JSON file.
+///   --output <path>       Optional. Path to write the evaluation record.
+///                         Defaults to stdout.
+///   --auth <path>         Optional. Path to the authorization JSON file.
+///                         Defaults to "eval/authorization.json".
+///
+/// Exit codes (consumed by CI):
 ///   0  — Authorized. Build may proceed.
-///   1  — Evaluation failed. A prerequisite was not satisfied.
+///   1  — Evaluation failed or flag error. A prerequisite was not satisfied.
 ///   2  — Passed; awaiting Origin authorization.
 ///        CI uploads the record as an artifact. Build is held.
 
+mod declaration;
+mod provenance;
+mod evidence;
+mod authorization;
 mod record;
 mod evaluator;
 
-use evaluator::{DeclarationSpec, Evaluator, ObservableSpec, PrerequisiteSpec, MappingSpec};
-use record::{EvaluationStatus, InventoryKind};
+use declaration::Declaration;
+use evaluator::Evaluator;
+use record::EvaluationStatus;
 
 fn main() {
-    let spec = datafeel_circadian_spec();
-    let mut rec = Evaluator::evaluate(spec);
+    let args = parse_args();
 
-    // Attempt to load authorization.
-    if let Some(auth) = load_authorization("eval/authorization.json") {
-        if auth.record_id == rec.record_id {
-            rec.authorization = Some(auth);
-            rec.status = EvaluationStatus::Authorized;
-            rec.failure_reason = None;
-        } else {
-            eprintln!(
-                "WARNING: eval/authorization.json record_id ({}) does not match \
-                 current record_id ({}). Authorization not applied.",
-                auth.record_id, rec.record_id
-            );
+    // Load the declaration from the JSON file.
+    let decl_text = match std::fs::read_to_string(&args.declaration_path) {
+        Ok(t)  => t,
+        Err(e) => {
+            eprintln!("ERROR: could not read declaration file '{}': {}", args.declaration_path, e);
+            std::process::exit(1);
+        }
+    };
+
+    let decl: Declaration = match serde_json::from_str(&decl_text) {
+        Ok(d)  => d,
+        Err(e) => {
+            eprintln!("ERROR: could not parse declaration file '{}': {}", args.declaration_path, e);
+            eprintln!("       {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Evaluate the declaration.
+    let mut record = Evaluator::evaluate(decl);
+
+    // Attempt to apply authorization.
+    if let Some(auth) = authorization::load(&args.auth_path) {
+        authorization::apply(&mut record, auth);
+    }
+
+    // Serialize the record.
+    let json = serde_json::to_string_pretty(&record)
+        .expect("record serialization failed");
+
+    // Write output.
+    match &args.output_path {
+        Some(path) => {
+            // Ensure parent directory exists.
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                if !parent.as_os_str().is_empty() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        eprintln!("ERROR: could not create output directory '{}': {}", parent.display(), e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            if let Err(e) = std::fs::write(path, &json) {
+                eprintln!("ERROR: could not write output file '{}': {}", path, e);
+                std::process::exit(1);
+            }
+            eprintln!("Record written to: {}", path);
+        }
+        None => {
+            println!("{}", json);
         }
     }
 
-    let json = serde_json::to_string_pretty(&rec)
-        .expect("serialization failed");
-    println!("{}", json);
-
-    match rec.status {
+    // Report and exit with CI-consumable code.
+    match record.status {
         EvaluationStatus::Authorized => {
-            eprintln!("✅  Declaration authorized. Build may proceed.");
+            eprintln!("✅  Declaration authorized (record_id: {}). Build may proceed.", record.record_id);
             std::process::exit(0);
         }
         EvaluationStatus::PassedAwaitingAuthorization => {
             eprintln!(
-                "⏸   Evaluation passed. Awaiting Origin authorization.\n\
-                 Review eval/record.json (uploaded as CI artifact), then commit:\n\
+                "⏸   Evaluation passed (record_id: {}).\n\
+                 \n\
+                 Build is held pending Origin authorization.\n\
+                 Review the evaluation record, then commit:\n\
                  \n\
                      eval/authorization.json\n\
                  \n\
-                 with record_id = \"{}\"",
-                rec.record_id
+                 with record_id = \"{}\"\n\
+                 See eval/README.md for the authorization format.",
+                record.record_id, record.record_id
             );
             std::process::exit(2);
         }
         EvaluationStatus::Failed => {
             eprintln!(
                 "❌  Evaluation failed: {}",
-                rec.failure_reason.as_deref().unwrap_or("unknown")
+                record.failure_reason.as_deref().unwrap_or("unknown")
             );
             std::process::exit(1);
         }
     }
 }
 
-fn load_authorization(path: &str) -> Option<record::OriginAuthorization> {
-    let content = std::fs::read_to_string(path).ok()?;
-    match serde_json::from_str(&content) {
-        Ok(a)  => Some(a),
-        Err(e) => {
-            eprintln!("WARNING: could not parse {}: {}", path, e);
-            None
-        }
-    }
+// ── CLI argument parsing ──────────────────────────────────────────────────────
+
+struct Args {
+    declaration_path: String,
+    output_path:      Option<String>,
+    auth_path:        String,
 }
 
-// ── DataFeel circadian declaration spec ──────────────────────────────────────
-//
-// This is the description of what datafeel-v05 declares.
-// It does not execute any mappings; it describes them.
-// The evaluator uses this to produce the evidence record Origin reviews.
+fn parse_args() -> Args {
+    let args: Vec<String> = std::env::args().collect();
 
-fn datafeel_circadian_spec() -> DeclarationSpec {
-    DeclarationSpec {
-        domain:      "datafeel",
-        topology_id: "circadian_v1",
-        version:     env!("CARGO_PKG_VERSION"),
+    if args.len() < 2 || args[1] != "evaluate" {
+        eprintln!("Usage: irrs-eval evaluate --declaration <path> [--output <path>] [--auth <path>]");
+        std::process::exit(1);
+    }
 
-        observables: vec![
-            ObservableSpec {
-                name:           "elapsed_s",
-                source:         "system_monotonic",
-                physical_basis: "Host monotonic clock: elapsed seconds \
-                                 since session start. Directly measurable; \
-                                 does not require derivation.",
-                kind:           InventoryKind::PrimaryObservable,
-                submitted_to_gate: true,
-            },
-            ObservableSpec {
-                name:           "period_s",
-                source:         "datafeel-v05 configuration",
-                physical_basis: "Declared circadian period (86400 s). \
-                                 Not sensed from the environment. \
-                                 Entered by the application as a declared reference value.",
-                kind:           InventoryKind::DeclaredParameter,
-                submitted_to_gate: true,
-            },
-            ObservableSpec {
-                name:           "CircadianPhase",
-                source:         "ratio_projection(elapsed_s, period_s)",
-                physical_basis: "Fractional ratio of elapsed seconds to declared period. \
-                                 Computed by the AdmissionGate from the two submitted values. \
-                                 The Generator does not compute or submit this value.",
-                kind:           InventoryKind::DerivedValue,
-                submitted_to_gate: false,
-            },
-        ],
+    let mut declaration_path: Option<String> = None;
+    let mut output_path:      Option<String> = None;
+    let mut auth_path         = "eval/authorization.json".to_string();
 
-        prerequisite: PrerequisiteSpec {
-            region_name:              "circadian_v1",
-            extents_lower:            0.0,
-            extents_upper:            1.0,
-            extents_label:            "phase_fraction",
-            orientation_preserved:    "circadian phase ratio (elapsed / period)",
-            orientation_discarded:    "absolute elapsed time and absolute period magnitude",
-            admission_rule_name:      "circadian_phase_interior",
-            admission_rule_description:
-                "Phase must be strictly interior to the open interval (0, 1). \
-                 Values at the boundary (0.0 or 1.0) are rejected.",
-            // The domain builder calls RegionBuilder::establish(locus) with a
-            // verified interior point before building the topology.
-            interior_locus_verified: true,
-        },
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--declaration" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("ERROR: --declaration requires a path argument");
+                    std::process::exit(1);
+                }
+                declaration_path = Some(args[i].clone());
+            }
+            "--output" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("ERROR: --output requires a path argument");
+                    std::process::exit(1);
+                }
+                output_path = Some(args[i].clone());
+            }
+            "--auth" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("ERROR: --auth requires a path argument");
+                    std::process::exit(1);
+                }
+                auth_path = args[i].clone();
+            }
+            other => {
+                eprintln!("ERROR: unknown argument '{}'", other);
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
 
-        mappings: vec![
-            MappingSpec {
-                name:               "ratio_projection",
-                input_description:  "elapsed_s (primary observable) + \
-                                     period_s (declared reference parameter)",
-                output_description: "CircadianPhase(fract(elapsed_s / period_s)) — \
-                                     a value in (0, 1) representing position \
-                                     within the circadian cycle",
-                preserves:          "circadian phase ratio (elapsed / period)",
-                discards:           "absolute elapsed time and absolute period magnitude",
-            },
-        ],
+    match declaration_path {
+        Some(p) => Args { declaration_path: p, output_path, auth_path },
+        None => {
+            eprintln!("ERROR: --declaration is required");
+            eprintln!("Usage: irrs-eval evaluate --declaration <path> [--output <path>] [--auth <path>]");
+            std::process::exit(1);
+        }
     }
 }

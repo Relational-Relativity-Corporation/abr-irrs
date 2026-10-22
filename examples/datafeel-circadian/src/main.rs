@@ -1,8 +1,11 @@
-/// DataFeel V0.5 — General-Purpose Gate Edition
+/// DataFeel circadian example — relational gate edition.
+///
+/// Demonstrates the abr-irrs relational gate with a circadian phase topology.
+/// This is an example application, not a production deployment.
 ///
 /// Dependency chain:
-///   datafeel-v05 → relational-gate  (enforcement primitive)
-///   datafeel-v05 → irrs-kernel      (frozen domain operators)
+///   datafeel-circadian → relational-gate  (enforcement primitive)
+///   datafeel-circadian → irrs-kernel      (frozen domain operators)
 ///
 /// The application:
 ///   1. Declares a topology and registers authorized mappings via relational-gate.
@@ -18,8 +21,8 @@ use relational_gate::{AdmissionOutcome, OperatorTrace};
 use irrs_kernel::operators::{VerifiedPhase, select_profile, profile_to_command, OperatorSummary};
 
 fn main() {
-    println!("DataFeel V0.5 — relational-gate edition");
-    println!("=========================================");
+    println!("DataFeel circadian example — relational-gate edition");
+    println!("======================================================");
 
     // Build the gate. This is the only place topology is declared for this run.
     let period_s          = 24.0 * 3600.0_f64;
@@ -58,9 +61,6 @@ fn main() {
                 let vphase    = VerifiedPhase { value: phase_val };
 
                 // Kernel V8: A→B→R
-                // (irrs-kernel topology is reconstructed here from the admitted value.
-                //  In the full V0.5 integration the kernel topology is shared;
-                //  this minimal slice passes what the frozen operator requires.)
                 let kernel_topo = build_kernel_topology(period_s, phase_val);
                 let profile     = select_profile(vphase);
                 let command     = profile_to_command(profile, vphase, &kernel_topo);
@@ -103,7 +103,7 @@ fn main() {
         summary.command_count, summary.mean_thermal_delta);
     println!("[Trace]        {} records held", trace.execution_count());
 
-    // Demonstrate that the gate computed the values — show provenance for pt 2
+    // Demonstrate that the gate computed the values — show provenance for pt 1
     if let Some(r) = trace.records().first() {
         println!("\n[Provenance — first trace record]");
         println!("  source:       {}", r.provenance.source_id);

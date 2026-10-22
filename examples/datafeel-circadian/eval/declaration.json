@@ -1,0 +1,67 @@
+{
+  "domain": "datafeel",
+  "topology_id": "circadian_v1",
+  "version": "0.5.0",
+  "description": "DataFeel circadian phase topology. Maps host-clock elapsed seconds to a fractional phase position within the circadian cycle using a declared period. The gate computes the ratio; the Generator does not.",
+
+  "inputs": [
+    {
+      "name": "elapsed_s",
+      "classification": "primary_observable",
+      "source_identity": "system_monotonic",
+      "acquisition_method": "Host monotonic clock read via std::time::Instant. Returns elapsed seconds since session start. Does not depend on wall-clock accuracy.",
+      "transformation_history": null,
+      "relationship_to_problem": "Primary observable. Submitted to the gate as the numerator of the ratio projection. The gate computes fract(elapsed_s / period_s).",
+      "supporting_evidence": [],
+      "known_limitations": "Monotonic clock does not account for system sleep or hibernation. Sessions spanning a sleep boundary will show a discontinuity in elapsed_s.",
+      "provenance_status": "declared",
+      "submitted_to_gate": true
+    },
+    {
+      "name": "period_s",
+      "classification": "declared_parameter",
+      "source_identity": "datafeel-circadian application configuration",
+      "acquisition_method": "Declared constant: 86400.0 seconds (24 hours). Not sensed from the environment. Entered by the application as the reference period for the circadian cycle.",
+      "transformation_history": null,
+      "relationship_to_problem": "Reference value (denominator). Submitted to the gate alongside elapsed_s. The gate uses it to compute the phase ratio. The Generator declares it; the gate applies it.",
+      "supporting_evidence": [],
+      "known_limitations": "Fixed at 24h. Does not account for individual chronotype variation or protocol-defined modified periods.",
+      "provenance_status": "declared",
+      "submitted_to_gate": true
+    },
+    {
+      "name": "CircadianPhase",
+      "classification": "derived_value",
+      "source_identity": "ratio_projection mapping executed by AdmissionGate",
+      "acquisition_method": "Computed by the gate as fract(elapsed_s / period_s). The Generator does not compute or submit this value. It exists only as AdmittedObservation<CircadianPhase> after gate admission.",
+      "transformation_history": "elapsed_s → (elapsed_s / period_s) → fract(...) → CircadianPhase ∈ (0, 1)",
+      "relationship_to_problem": "The admitted output of the relational gate. Carries the fractional phase position within the circadian cycle. Required by Kernel V8 operators (A→B→R chain).",
+      "supporting_evidence": [],
+      "known_limitations": "Strictly interior to (0, 1). Values at the boundary (0.0 or 1.0) are rejected by the gate. Phase 0.0 (midnight exactly) is not representable in this topology.",
+      "provenance_status": "declared",
+      "submitted_to_gate": false
+    }
+  ],
+
+  "regional_prerequisite": {
+    "region_name": "circadian_v1",
+    "extents_lower": 0.0,
+    "extents_upper": 1.0,
+    "extents_label": "phase_fraction",
+    "orientation_preserved": "circadian phase ratio (elapsed / period)",
+    "orientation_discarded": "absolute elapsed time and absolute period magnitude",
+    "admission_rule_name": "circadian_phase_interior",
+    "admission_rule_description": "Phase must be strictly interior to the open interval (0, 1). Values at the boundary (0.0 or 1.0) are rejected. The regional locus is established at build time by calling RegionBuilder::establish(locus) with a verified interior point.",
+    "interior_locus_verified": true
+  },
+
+  "mappings": [
+    {
+      "name": "ratio_projection",
+      "input_description": "elapsed_s (PrimaryObservable, submitted by Generator) + period_s (DeclaredParameter, submitted by Generator)",
+      "output_description": "CircadianPhase(fract(elapsed_s / period_s)) — a value in the open interval (0, 1) representing the fractional position within the circadian cycle",
+      "preserves": "circadian phase ratio (elapsed / period); relative ordering of phase positions within the cycle",
+      "discards": "absolute elapsed time and absolute period magnitude; information about which cycle the observation falls in"
+    }
+  ]
+}
