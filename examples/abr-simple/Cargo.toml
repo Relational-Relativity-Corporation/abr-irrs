@@ -1,0 +1,8 @@
+[package]
+name = "abr-simple"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal canonical ABR calculation — complete mathematical and observational trace"
+
+[dependencies]
+irrs-kernel = { path = "../../irrs-kernel" }

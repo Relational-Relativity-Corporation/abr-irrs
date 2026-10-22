@@ -3,6 +3,6 @@ members = [
     "relational-gate",
     "irrs-kernel",
     "irrs-eval",
-    "examples/datafeel-circadian",
+    "examples/abr-simple",
 ]
 resolver = "2"

@@ -1,13 +1,17 @@
-/// IRRS Kernel V8 — Frozen Implementation
+/// IRRS Kernel V8 — Canonical Implementation
 ///
-/// No modifications are authorized.
-/// Consumed exclusively through irrs-admission.
-/// Application code (datafeel-v05) has no direct dependency on this crate.
+/// Implements the operator mathematics from `kernel_reference.md` (Metatron Dynamics,
+/// Kernel V8, 2026-09-27; operational discipline added 2026-09-29).
 ///
-/// This module contains the operator mathematics for Δ→Σ and A→B→R.
-/// All kernel entry points are pub(crate) to irrs-admission; they are not
-/// exposed to application code.
+/// File responsibilities (separation rule, section 13 of kernel_reference.md):
+///   `operators.rs`          — what acts: operators, data structures, ρ computation
+///   `derived_invariants.rs` — what is produced: confirmed Part I invariant functions
+///   `region.rs`             — M Regional Instantiation Prerequisite enforcement
+///
+/// This kernel is frozen. No modification is authorized.
+/// Where this crate and `kernel_reference.md` differ, the source file governs;
+/// a difference is a finding to be returned to Origin.
 
-pub mod topology;
 pub mod operators;
+pub mod derived_invariants;
 pub mod region;
