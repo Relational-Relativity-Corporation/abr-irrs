@@ -43,6 +43,7 @@ fn test_failed_cannot_be_authorized() {
         topology_id: "fail_topology".to_string(),
         version:     "0.0.1".to_string(),
         description: Some("Declaration that fails prerequisite check.".to_string()),
+        persistence: None,
         inputs: vec![
             irrs_eval::declaration::InputDeclaration {
                 name:                  "x".to_string(),
@@ -122,6 +123,7 @@ fn test_mismatched_digest_rejected() {
         topology_id: "digest_topology".to_string(),
         version:     "0.0.1".to_string(),
         description: Some("Declaration that passes.".to_string()),
+        persistence: None,
         inputs: vec![
             irrs_eval::declaration::InputDeclaration {
                 name:                  "y".to_string(),
@@ -208,6 +210,7 @@ fn test_verified_without_evidence_flagged() {
         topology_id: "provenance_topology".to_string(),
         version:     "0.0.1".to_string(),
         description: Some("Declaration with inconsistent provenance claim.".to_string()),
+        persistence: None,
         inputs: vec![
             InputDeclaration {
                 name:                  "sensor_reading".to_string(),

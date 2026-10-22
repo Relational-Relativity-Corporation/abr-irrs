@@ -30,6 +30,17 @@ pub struct Declaration {
     #[serde(default)]
     pub description: Option<String>,
 
+    /// Continuous-process persistence declaration.
+    ///
+    /// When present, the evaluator enforces the Continuous Relational Process Rule:
+    /// no synthetic initialization, OPEN reporting for unavailable prior evidence,
+    /// and Kernel V8 persistence operator path verification.
+    ///
+    /// When absent, the evaluator records that the continuous-process posture is
+    /// undeclared and adds a note to the evaluation record for Origin review.
+    #[serde(default)]
+    pub persistence: Option<PersistenceDeclaration>,
+
     /// Every input value involved in the declared problem space.
     /// Includes values submitted to the gate AND values the gate produces.
     pub inputs: Vec<InputDeclaration>,
@@ -144,6 +155,84 @@ pub struct EvidenceRef {
     /// Kind of evidence: "calibration", "specification", "test_result",
     /// "measurement_log", "design_document", or similar.
     pub kind: String,
+}
+
+// ── Continuous-process persistence declaration ────────────────────────────────
+
+/// Declaration of the continuous-process persistence posture.
+///
+/// Every evaluation enters an ongoing relational process. The evaluation window
+/// opens onto a process that is already running; the first admitted observation
+/// begins the evaluation record, not the physical process.
+///
+/// This declaration captures:
+///   * How the evaluation window opens (process_entry statement).
+///   * Whether prior relational evidence is available at window open.
+///   * Which Kernel V8 persistence operators are declared for this process.
+///
+/// Synthetic initialization is PROHIBITED. Fabricated zeros, cold-start states,
+/// and non-observed prior relational results are inadmissible. Actual observed
+/// zero values remain admissible.
+///
+/// If prior evidence is unavailable, declare `prior_evidence: Open`. The
+/// evaluator reports this as an OPEN condition and does not fabricate prior
+/// evidence or prevent otherwise admissible calculations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistenceDeclaration {
+    /// Plain-language statement of how the evaluation window opens onto the
+    /// ongoing process. Must assert that the process is continuous and that
+    /// the first admitted observation begins the evaluation record, not the
+    /// physical process.
+    pub process_entry: String,
+
+    /// Status of prior relational evidence at evaluation window open.
+    ///
+    /// * `Available` — prior relational evidence from the running process is
+    ///   present. Evaluation proceeds normally.
+    /// * `Open` — prior evidence is not yet available. The evaluator reports
+    ///   this as an OPEN condition. Otherwise admissible calculations proceed.
+    ///   An unavailable prior is NOT equivalent to a zero prior.
+    /// * `Synthetic` — a fabricated, cold-start, or non-observed prior has
+    ///   been declared. PROHIBITED. The evaluator fails the declaration.
+    pub prior_evidence: PriorEvidenceStatus,
+
+    /// The Kernel V8 persistence operator path declared by the submitter.
+    ///
+    /// Must list the operators that will be applied in sequence. For Kernel V8
+    /// compliance the path must include all three stages:
+    /// `["A_persistence", "B_persistence", "R_persistence"]`.
+    pub persistence_path: Vec<String>,
+}
+
+/// Status of prior relational evidence at evaluation window open.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PriorEvidenceStatus {
+    /// Prior relational evidence is available from the running process.
+    /// Evaluation proceeds with the available prior.
+    Available,
+
+    /// Prior relational evidence is not available at evaluation window open.
+    ///
+    /// This is a declared OPEN condition. The evaluator reports the dependency
+    /// as OPEN and does not fabricate prior evidence or prevent otherwise
+    /// admissible calculations. The OPEN condition carries forward until prior
+    /// relational evidence is available from an actual completed evaluation cycle.
+    ///
+    /// Note: this is not the same as a prior value of zero. "Unavailable" means
+    /// the evidence does not yet exist, not that it is numerically zero.
+    Open,
+
+    /// A synthetic, fabricated, or cold-start prior relational result has been
+    /// declared as prior relational evidence. PROHIBITED.
+    ///
+    /// `PersistenceState::cold_start` is not admissible. Fabricated zeros and
+    /// non-observed initialization values are not admissible. If the prior is
+    /// genuinely absent, declare `Open` instead.
+    ///
+    /// Actual observed sensor values of 0.0 remain admissible; they are
+    /// `PrimaryObservable` inputs acquired from a real sensor, not synthetic.
+    Synthetic,
 }
 
 // ── Regional M prerequisite declaration ──────────────────────────────────────

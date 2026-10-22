@@ -52,6 +52,17 @@ pub struct EvaluationRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization: Option<OriginAuthorization>,
 
+    /// Continuous-process rule evaluation report.
+    ///
+    /// Documents the evaluator's findings on the Continuous Relational Process Rule:
+    /// process entry posture, prior evidence status, persistence operator path,
+    /// and any OPEN conditions arising from unavailable prior relational evidence.
+    ///
+    /// Present whenever a `persistence` declaration is provided or the evaluator
+    /// needs to note that the posture is undeclared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuous_process: Option<ContinuousProcessReport>,
+
     /// Evaluator observations — inconsistencies, provenance gaps, or informational
     /// notes not severe enough to fail evaluation. Reviewed by Origin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -180,6 +191,70 @@ pub struct MappingChainEntry {
     pub discards: String,
     /// Always "AdmissionGate (not Generator)".
     pub executor: String,
+}
+
+// ── Continuous-process rule report ───────────────────────────────────────────
+
+/// Report of the Continuous Relational Process Rule evaluation.
+///
+/// Every evaluation enters an ongoing relational process. This report documents
+/// what the evaluator found about the process entry posture and prior relational
+/// evidence status declared by the submitter.
+///
+/// An OPEN condition in `open_conditions` does not fail the evaluation.
+/// It is a declared dependency reported for Origin review and carried forward
+/// until prior relational evidence is available from an actual evaluation cycle.
+///
+/// A `SyntheticViolation` in `prior_evidence` fails the evaluation. The failure
+/// reason is also written to the top-level `failure_reason` field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContinuousProcessReport {
+    /// True when a `persistence` block was present in the declaration.
+    pub process_entry_declared: bool,
+
+    /// The submitter's plain-language statement of how the evaluation window
+    /// opens onto the ongoing process, if declared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_entry_statement: Option<String>,
+
+    /// Evaluator finding on prior relational evidence status.
+    pub prior_evidence: PriorEvidenceReport,
+
+    /// The declared Kernel V8 persistence operator path, if any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub persistence_path: Vec<String>,
+
+    /// OPEN conditions arising from the continuous-process evaluation.
+    ///
+    /// An OPEN condition means a relational dependency exists but cannot be
+    /// resolved from available evidence. It does NOT mean the value is zero.
+    /// The evaluator does not fabricate evidence; it reports the gap.
+    /// Otherwise admissible calculations proceed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open_conditions: Vec<String>,
+}
+
+/// The evaluator's finding on prior relational evidence status.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PriorEvidenceReport {
+    /// Prior relational evidence is declared as available.
+    /// Evaluation proceeds with the available prior.
+    Available,
+
+    /// Prior relational evidence is unavailable at evaluation window open.
+    ///
+    /// Reported as an OPEN condition. Otherwise admissible calculations proceed.
+    /// The dependency is declared, not fabricated as zero.
+    Open,
+
+    /// A synthetic, fabricated, or cold-start prior was declared. PROHIBITED.
+    /// The evaluator fails the declaration. See `failure_reason` for details.
+    SyntheticViolation,
+
+    /// No persistence declaration was present in the declaration.
+    /// The continuous-process posture is undeclared. Origin should confirm.
+    Undeclared,
 }
 
 // ── Evaluation status ─────────────────────────────────────────────────────────

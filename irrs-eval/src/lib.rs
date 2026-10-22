@@ -16,10 +16,12 @@ pub mod evaluator;
 pub use declaration::{
     Declaration, InputDeclaration, InputClassification, ProvenanceStatus,
     EvidenceRef, RegionalPrerequisiteDecl, MappingDeclaration,
+    PersistenceDeclaration, PriorEvidenceStatus,
 };
 pub use record::{
     EvaluationRecord, EvaluationStatus, InventoryItem, InventoryKind,
     PrerequisiteReport, MappingChainEntry, OriginAuthorization,
+    ContinuousProcessReport, PriorEvidenceReport,
 };
 pub use provenance::ProvenanceSummary;
 pub use evaluator::Evaluator;
