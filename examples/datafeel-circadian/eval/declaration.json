@@ -7,13 +7,13 @@
   "inputs": [
     {
       "name": "elapsed_s",
-      "classification": "primary_observable",
-      "source_identity": "system_monotonic",
-      "acquisition_method": "Host monotonic clock read via std::time::Instant. Returns elapsed seconds since session start. Does not depend on wall-clock accuracy.",
+      "classification": "simulated_input",
+      "source_identity": "linear_sweep_generator",
+      "acquisition_method": "Linearly spaced arithmetic sweep: elapsed_s = (i as f64 / 20.0) * period_s for i in 0..20. Not derived from a physical clock. Generated synthetically to exercise the full range of the phase topology.",
       "transformation_history": null,
-      "relationship_to_problem": "Primary observable. Submitted to the gate as the numerator of the ratio projection. The gate computes fract(elapsed_s / period_s).",
+      "relationship_to_problem": "Simulated time value submitted to the gate as the numerator of the ratio projection. Exercises the topology across the interior of (0, 1). The gate computes fract(elapsed_s / period_s).",
       "supporting_evidence": [],
-      "known_limitations": "Monotonic clock does not account for system sleep or hibernation. Sessions spanning a sleep boundary will show a discontinuity in elapsed_s.",
+      "known_limitations": "Not a real clock read. This is a test fixture input. It exercises the topology's admission logic but does not represent a physical observational acquisition.",
       "provenance_status": "declared",
       "submitted_to_gate": true
     },
@@ -58,7 +58,7 @@
   "mappings": [
     {
       "name": "ratio_projection",
-      "input_description": "elapsed_s (PrimaryObservable, submitted by Generator) + period_s (DeclaredParameter, submitted by Generator)",
+      "input_description": "elapsed_s (SimulatedInput, linear sweep, submitted by Generator) + period_s (DeclaredParameter, submitted by Generator)",
       "output_description": "CircadianPhase(fract(elapsed_s / period_s)) — a value in the open interval (0, 1) representing the fractional position within the circadian cycle",
       "preserves": "circadian phase ratio (elapsed / period); relative ordering of phase positions within the cycle",
       "discards": "absolute elapsed time and absolute period magnitude; information about which cycle the observation falls in"

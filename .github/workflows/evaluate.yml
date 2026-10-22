@@ -1,12 +1,19 @@
 name: Declaration Evaluation
 
-# Runs on every push and pull request.
+# Runs on every push, pull request, and manual dispatch.
 #
 # Job 1 (evaluate): Always runs. Produces an evaluation record.
-#   - Reads the declaration from examples/datafeel-circadian/eval/declaration.json
-#     via: cargo run -p irrs-eval -- evaluate --declaration <path> --output eval/record.json
+#   - Reads the declaration from DECLARATION_PATH (configurable).
+#   - Default: examples/datafeel-circadian/eval/declaration.json
+#   - Override at manual dispatch (workflow_dispatch input: declaration_path)
+#     or by setting the IRRS_DECLARATION_PATH repository variable.
+#
+# irrs-eval is domain-independent. It does not contain DataFeel-specific code.
+# Any valid declaration JSON can be evaluated by setting DECLARATION_PATH.
+#
 #   - If no eval/authorization.json: uploads record as artifact, holds build.
-#   - If eval/authorization.json present and record_id matches: proceeds.
+#   - If eval/authorization.json present and both record_id and
+#     declaration_digest match: build proceeds.
 #   - If evaluation fails (missing prerequisites): fails immediately.
 #
 # Job 2 (build): Runs only when Job 1 reports authorized = true.
@@ -14,17 +21,31 @@ name: Declaration Evaluation
 # Origin authorization:
 #   1. Download the "evaluation-record" artifact from this workflow run.
 #   2. Review eval/record.json (see eval/README.md).
-#   3. Commit eval/authorization.json with the matching record_id.
-#   4. Push — the next run will proceed to build.
-#
-# To evaluate a different declaration, pass --declaration <path> to irrs-eval.
-# irrs-eval does not contain application-specific code; the declaration is
-# the only domain-specific input.
+#   3. Copy eval/authorization.json.template to eval/authorization.json.
+#   4. Fill in record_id, declaration_digest, authorized_by, authorized_at,
+#      and statement — values must match eval/record.json exactly.
+#   5. Commit and push — the next run will proceed to build.
 
 on:
   push:
     branches: [ main ]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      declaration_path:
+        description: >
+          Path to the declaration JSON file to evaluate
+          (relative to the repository root).
+          Leave blank to use the default.
+        required: false
+        default: ''
+
+env:
+  # Precedence (highest to lowest):
+  #   1. workflow_dispatch input  (manual trigger)
+  #   2. IRRS_DECLARATION_PATH   (repository variable, set in Settings → Variables)
+  #   3. default below
+  DEFAULT_DECLARATION_PATH: examples/datafeel-circadian/eval/declaration.json
 
 jobs:
   evaluate:
@@ -51,13 +72,39 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Resolve declaration path
+        id: resolve
+        run: |
+          # Priority: workflow_dispatch input > repository variable > default
+          DISPATCH_INPUT="${{ github.event.inputs.declaration_path }}"
+          REPO_VAR="${{ vars.IRRS_DECLARATION_PATH }}"
+
+          if [ -n "$DISPATCH_INPUT" ]; then
+            DECLARATION_PATH="$DISPATCH_INPUT"
+            echo "source=workflow_dispatch_input" >> $GITHUB_OUTPUT
+          elif [ -n "$REPO_VAR" ]; then
+            DECLARATION_PATH="$REPO_VAR"
+            echo "source=repository_variable" >> $GITHUB_OUTPUT
+          else
+            DECLARATION_PATH="${DEFAULT_DECLARATION_PATH}"
+            echo "source=default" >> $GITHUB_OUTPUT
+          fi
+
+          echo "declaration_path=$DECLARATION_PATH" >> $GITHUB_OUTPUT
+          echo "Using declaration: $DECLARATION_PATH (source: $(cat $GITHUB_OUTPUT | grep source | cut -d= -f2))"
+
+          if [ ! -f "$DECLARATION_PATH" ]; then
+            echo "ERROR: declaration file not found: $DECLARATION_PATH"
+            exit 1
+          fi
+
       - name: Run evaluator
         id: run
         # Exit code 0 = authorized, 1 = failed, 2 = awaiting authorization.
         # We capture the record regardless and let the next step interpret status.
         run: |
           cargo run -p irrs-eval -- evaluate \
-            --declaration examples/datafeel-circadian/eval/declaration.json \
+            --declaration "${{ steps.resolve.outputs.declaration_path }}" \
             --output eval/record.json \
             2>eval/eval.log
           echo "exit_code=$?" >> $GITHUB_OUTPUT
@@ -69,6 +116,7 @@ jobs:
         run: |
           STATUS=$(python3 -c "import json,sys; d=json.load(open('eval/record.json')); print(d['status'])")
           RECORD_ID=$(python3 -c "import json,sys; d=json.load(open('eval/record.json')); print(d['record_id'])")
+          DIGEST=$(python3 -c "import json,sys; d=json.load(open('eval/record.json')); print(d['declaration_digest'])")
           echo "record_id=$RECORD_ID" >> $GITHUB_OUTPUT
 
           if [ "$STATUS" = "authorized" ]; then
@@ -81,8 +129,10 @@ jobs:
             echo ""
             echo "Build is held pending Origin authorization."
             echo "Review the evaluation record (CI artifact: 'evaluation-record'),"
-            echo "then commit eval/authorization.json with record_id = \"$RECORD_ID\"."
-            echo "See eval/README.md for the authorization format."
+            echo "then commit eval/authorization.json with:"
+            echo "  record_id          = \"$RECORD_ID\""
+            echo "  declaration_digest = \"$DIGEST\""
+            echo "See eval/authorization.json.template and eval/README.md."
 
           else
             echo "authorized=false" >> $GITHUB_OUTPUT

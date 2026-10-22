@@ -11,19 +11,27 @@ use crate::provenance::ProvenanceSummary;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationRecord {
-    /// Stable identifier: "{domain}-{topology_id}-{version}".
-    /// Referenced in authorization.json to bind the two together.
+    /// Stable human-readable identifier: "{domain}-{topology_id}-{version}".
     pub record_id: String,
+
+    /// SHA-256 hex digest of the raw declaration JSON text.
+    ///
+    /// Authorization is only valid when `authorization.declaration_digest`
+    /// matches this field exactly. A change to any byte of the declaration
+    /// invalidates the existing authorization.
+    pub declaration_digest: String,
 
     pub domain: String,
     pub topology_id: String,
     pub version: String,
 
-    /// Classification and provenance of every input in the declaration.
-    /// Includes values submitted to the gate AND values the gate produces.
+    /// Classification, provenance claims, and evaluator assessments for every
+    /// input value in the declaration. Includes values submitted to the gate
+    /// AND values the gate produces (DerivedValue).
     pub input_inventory: Vec<InventoryItem>,
 
     /// Aggregated view of provenance status across all inputs.
+    /// The note explicitly states what the evaluator can and cannot determine.
     pub provenance_summary: ProvenanceSummary,
 
     /// Verification of the Regional M prerequisite.
@@ -56,7 +64,7 @@ pub struct EvaluationRecord {
 pub struct InventoryItem {
     pub name: String,
 
-    /// Classification from the declaration.
+    /// Classification from the declaration (submitter's claim).
     pub classification: InventoryKind,
 
     /// Source identity from the declaration.
@@ -79,14 +87,40 @@ pub struct InventoryItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub known_limitations: Option<String>,
 
-    /// Provenance status from the declaration.
-    pub provenance_status: crate::declaration::ProvenanceStatus,
+    /// Provenance status claimed by the submitter.
+    pub provenance_status_claimed: crate::declaration::ProvenanceStatus,
 
-    /// Evaluator's observation about this input's provenance.
-    pub provenance_note: String,
+    /// The evaluator's structural assessment of the provenance claim.
+    ///
+    /// This is NOT independent verification of physical acquisition.
+    /// It is a consistency check: does the claim make internal sense?
+    /// (e.g., `Verified` with no evidence references is inconsistent.)
+    /// Independent verification is Origin's determination to make.
+    pub evaluator_provenance_assessment: ProvenanceAssessment,
 
     /// Whether this value is submitted by the Generator in its DeclarationPackage.
     pub submitted_to_gate: bool,
+}
+
+/// The evaluator's structural assessment of a provenance claim.
+///
+/// This assesses the internal consistency of the claim, not whether
+/// the underlying acquisition actually occurred as described.
+/// The evaluator cannot independently verify physical acquisition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProvenanceAssessment {
+    /// The claim is internally consistent.
+    /// Declared with or without evidence: consistent.
+    /// Verified with at least one evidence reference: consistent.
+    ConsistentClaim,
+
+    /// The claim is internally inconsistent.
+    /// Example: status is `Verified` but no evidence references are provided.
+    InconsistentClaim {
+        /// Reason the evaluator determined this claim to be inconsistent.
+        reason: String,
+    },
 }
 
 /// Five classifications describing the observational basis of an input.
@@ -126,9 +160,13 @@ pub struct PrerequisiteReport {
     /// True if all four prerequisite fields were declared (no defaults).
     pub all_fields_declared: bool,
 
-    /// True if `establish(locus)` was called and the locus was interior.
-    /// The gate enforces this at build time, not at runtime submission.
-    pub interior_locus_verified: bool,
+    /// True if the submitter declared that `establish(locus)` was called
+    /// with a verified interior point.
+    ///
+    /// This is a SUBMITTER CLAIM, not an independent evaluator check.
+    /// The evaluator records what was declared; it does not re-execute
+    /// the gate's locus verification at evaluation time.
+    pub interior_locus_verified_claimed: bool,
 }
 
 // ── Mapping chain ─────────────────────────────────────────────────────────────
@@ -160,11 +198,19 @@ pub enum EvaluationStatus {
 // ── Origin authorization ──────────────────────────────────────────────────────
 
 /// Written by Origin to eval/authorization.json after reviewing the record.
-/// The evaluator merges this into the record on its next run if record_id matches.
+/// The evaluator applies this on its next run only when both fields match.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OriginAuthorization {
-    /// Must match EvaluationRecord.record_id exactly.
+    /// Must match `EvaluationRecord.record_id` exactly.
     pub record_id: String,
+
+    /// Must match `EvaluationRecord.declaration_digest` exactly.
+    ///
+    /// Copy from the evaluation record produced for the commit you reviewed.
+    /// A change to any byte of the declaration produces a different digest
+    /// and invalidates this authorization.
+    pub declaration_digest: String,
+
     pub authorized_by: String,
     pub authorized_at: String,
     /// Origin's explicit statement about what was reviewed and authorized.

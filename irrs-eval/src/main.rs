@@ -30,6 +30,8 @@ use declaration::Declaration;
 use evaluator::Evaluator;
 use record::EvaluationStatus;
 
+use sha2::{Sha256, Digest as Sha2Digest};
+
 fn main() {
     let args = parse_args();
 
@@ -42,6 +44,12 @@ fn main() {
         }
     };
 
+    // Compute the SHA-256 digest of the raw declaration JSON text BEFORE parsing.
+    // This digest is stored in the evaluation record and must match the authorization's
+    // declaration_digest exactly. Any byte change to the declaration invalidates
+    // an existing authorization.
+    let declaration_digest = hex::encode(Sha256::digest(decl_text.as_bytes()));
+
     let decl: Declaration = match serde_json::from_str(&decl_text) {
         Ok(d)  => d,
         Err(e) => {
@@ -52,7 +60,7 @@ fn main() {
     };
 
     // Evaluate the declaration.
-    let mut record = Evaluator::evaluate(decl);
+    let mut record = Evaluator::evaluate(decl, declaration_digest);
 
     // Attempt to apply authorization.
     if let Some(auth) = authorization::load(&args.auth_path) {
@@ -101,9 +109,13 @@ fn main() {
                  \n\
                      eval/authorization.json\n\
                  \n\
-                 with record_id = \"{}\"\n\
-                 See eval/README.md for the authorization format.",
-                record.record_id, record.record_id
+                 with record_id          = \"{}\"\n\
+                 and declaration_digest  = \"{}\"\n\
+                 \n\
+                 See eval/authorization.json.template and eval/README.md for the authorization format.\n\
+                 NOTE: The declaration_digest must match the record exactly. \
+                 Any change to declaration.json after evaluation invalidates the digest.",
+                record.record_id, record.record_id, record.declaration_digest
             );
             std::process::exit(2);
         }

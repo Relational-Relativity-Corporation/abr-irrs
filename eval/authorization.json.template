@@ -1,5 +1,6 @@
 {
-  "record_id": "<copy from eval/record.json — e.g. datafeel-circadian_v1-0.5.0>",
+  "record_id": "<copy record_id from eval/record.json — e.g. datafeel-circadian_v1-0.5.0>",
+  "declaration_digest": "<copy declaration_digest from eval/record.json — 64-char SHA-256 hex string>",
   "authorized_by": "<your name>",
   "authorized_at": "<YYYY-MM-DD>",
   "statement": "<your explicit statement of what you reviewed and what you authorize>"
