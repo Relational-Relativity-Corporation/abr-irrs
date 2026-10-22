@@ -1,0 +1,8 @@
+[package]
+name = "irrs-kernel"
+version = "8.0.0"
+edition = "2021"
+
+# Kernel V8 is frozen. No dependencies may be added.
+# No modifications are authorized.
+[dependencies]

@@ -1,0 +1,3 @@
+[workspace]
+members = ["relational-gate", "irrs-kernel", "datafeel-v05"]
+resolver = "2"

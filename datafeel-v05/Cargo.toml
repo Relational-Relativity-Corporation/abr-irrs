@@ -1,0 +1,13 @@
+[package]
+name = "datafeel-v05"
+version = "0.5.0"
+edition = "2021"
+
+[dependencies]
+# The application depends on the general-purpose enforcement gate
+# and the frozen domain kernel. It does not depend on any prior
+# irrs-admission layer.
+relational-gate = { path = "../relational-gate" }
+irrs-kernel     = { path = "../irrs-kernel" }
+
+# No other dependencies without Origin declaration.

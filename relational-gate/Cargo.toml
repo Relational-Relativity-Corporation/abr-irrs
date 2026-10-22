@@ -1,0 +1,10 @@
+[package]
+name = "relational-gate"
+version = "0.1.0"
+edition = "2021"
+description = "General-purpose relational admission enforcement for any Rust project"
+
+# No external dependencies.
+# This crate uses only the Rust standard library.
+# Every project that needs relational enforcement adds this as a dependency.
+[dependencies]
