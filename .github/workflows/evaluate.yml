@@ -1,0 +1,123 @@
+name: Declaration Evaluation
+
+# Runs on every push and pull request.
+#
+# Job 1 (evaluate): Always runs. Produces an evaluation record.
+#   - If no eval/authorization.json: uploads record as artifact, holds build.
+#   - If eval/authorization.json present and record_id matches: proceeds.
+#   - If evaluation fails (missing prerequisites): fails immediately.
+#
+# Job 2 (build): Runs only when Job 1 reports authorized = true.
+#
+# Origin authorization:
+#   1. Download the "evaluation-record" artifact from this workflow run.
+#   2. Review eval/record.json (see eval/README.md).
+#   3. Commit eval/authorization.json with the matching record_id.
+#   4. Push — the next run will proceed to build.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  evaluate:
+    name: Evaluate Declaration
+    runs-on: ubuntu-latest
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+      record_id:  ${{ steps.check.outputs.record_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run evaluator
+        id: run
+        # Exit code 0 = authorized, 1 = failed, 2 = awaiting authorization.
+        # We capture the record regardless and let the next step interpret status.
+        run: |
+          cargo run -p irrs-eval > eval/record.json 2>eval/eval.log
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          cat eval/eval.log >&2
+        continue-on-error: true
+
+      - name: Check result
+        id: check
+        run: |
+          STATUS=$(python3 -c "import json,sys; d=json.load(open('eval/record.json')); print(d['status'])")
+          RECORD_ID=$(python3 -c "import json,sys; d=json.load(open('eval/record.json')); print(d['record_id'])")
+          echo "record_id=$RECORD_ID" >> $GITHUB_OUTPUT
+
+          if [ "$STATUS" = "authorized" ]; then
+            echo "authorized=true" >> $GITHUB_OUTPUT
+            echo "✅ Declaration authorized (record_id: $RECORD_ID). Build will proceed."
+
+          elif [ "$STATUS" = "passed_awaiting_authorization" ]; then
+            echo "authorized=false" >> $GITHUB_OUTPUT
+            echo "⏸ Evaluation passed (record_id: $RECORD_ID)."
+            echo ""
+            echo "Build is held pending Origin authorization."
+            echo "Review the evaluation record (CI artifact: 'evaluation-record'),"
+            echo "then commit eval/authorization.json with record_id = \"$RECORD_ID\"."
+            echo "See eval/README.md for the authorization format."
+
+          else
+            echo "authorized=false" >> $GITHUB_OUTPUT
+            REASON=$(python3 -c "import json,sys; d=json.load(open('eval/record.json')); print(d.get('failure_reason','unknown'))")
+            echo "❌ Evaluation failed: $REASON"
+            exit 1
+          fi
+
+      - name: Upload evaluation record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-record
+          path: eval/record.json
+          retention-days: 90
+
+  build:
+    name: Build and Test
+    needs: evaluate
+    if: needs.evaluate.outputs.authorized == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build
+
+      - name: Test
+        run: cargo test
+
+      - name: Run DataFeel circadian sweep
+        run: cargo run -p datafeel-v05
