@@ -13,8 +13,8 @@ use irrs_kernel::operators::{
     DeclaredRelations, EdgeProvenance, NodeField,
 };
 use irrs_session::admission::{
-    AdmissionResult, DeclaredObservable, EvidenceRecord, ExecutionResult,
-    KernelOpenCondition, ObservationalComparison, OpenCondition,
+    AdmissionResult, DeclaredObservable, EvidenceRecord,
+    ExecutionResult, KernelOpenCondition, ObservationalComparison, OpenCondition,
     ParameterProvenance, SessionOutput, VerificationRecord, DETECTION_TOLERANCE,
 };
 use irrs_session::session::Session;
@@ -279,7 +279,7 @@ fn test_session_execute_relational_output() {
 
     match session.execute() {
         SessionOutput::Complete(ExecutionResult::RelationalOutput {
-            edge_field, detection_indicators, parameter_provenance, kernel_open
+            edge_field, detection_indicators, parameter_provenance, kernel_open, ..
         }) => {
             let tol = 1e-6_f64;
             assert!((edge_field.spatial[0][0] - 2.6).abs() < tol,
@@ -318,7 +318,7 @@ fn test_session_calculated_zero_flat_field() {
 
     match session.execute() {
         SessionOutput::Complete(ExecutionResult::CalculatedZero {
-            edge_field, parameter_provenance, kernel_open
+            edge_field, parameter_provenance, kernel_open, ..
         }) => {
             let tol = DETECTION_TOLERANCE;
             assert!(edge_field.spatial[0][0].abs() < tol,
@@ -599,16 +599,18 @@ fn synthetic_verification_record_passing() -> VerificationRecord {
         verification_source: "Task #10 synthetic fixture — internal consistency check".into(),
         comparisons: vec![
             ObservationalComparison {
-                label: "R[e0]".into(),
-                observed: 2.6,
-                calculated: 2.6,
-                tolerance: 1e-3,
+                label:      "R[e0]".into(),
+                observed:   2.6,
+                tolerance:  1e-3,
+                edge_index: 0,
+                component:  0,
             },
             ObservationalComparison {
-                label: "R[e1]".into(),
-                observed: 2.4,
-                calculated: 2.4,
-                tolerance: 1e-3,
+                label:      "R[e1]".into(),
+                observed:   2.4,
+                tolerance:  1e-3,
+                edge_index: 1,
+                component:  0,
             },
         ],
         open_items: vec![],
@@ -619,18 +621,15 @@ fn synthetic_verification_record_passing() -> VerificationRecord {
 fn test_verified_requires_inspectable_comparison() {
     let rec = synthetic_verification_record_passing();
 
-    // All comparisons pass; no open items → is_fully_verified() must be true.
-    assert!(rec.is_fully_verified(),
-        "synthetic fixture comparisons should all pass");
-    assert!(rec.failed_comparisons().is_empty());
-
     let prov = ParameterProvenance::ObservationallyVerified(rec);
     assert!(prov.is_verified(), "should be verified");
     assert!(!prov.is_evidence_declared());
     assert!(!prov.is_illustrative());
+    // label() without evaluation always returns base label; CORRESPONDENCE
+    // FAILED is determined only after the session runs the kernel.
     assert_eq!(prov.label(), "OBSERVATIONALLY VERIFIED");
 
-    // Admitted and executed; math result unchanged.
+    // Execute; session computes evaluated_comparisons against actual kernel output.
     let mut session = Session::new();
     session.declare_topology(stu_topology());
     session.declare_field(stu_field_345());
@@ -639,7 +638,7 @@ fn test_verified_requires_inspectable_comparison() {
 
     match session.execute() {
         SessionOutput::Complete(ExecutionResult::RelationalOutput {
-            edge_field, parameter_provenance, ..
+            edge_field, parameter_provenance, evaluated_comparisons, ..
         }) => {
             // Math result is kernel-calculated; not rewritten by provenance.
             assert!((edge_field.spatial[0][0] - 2.6).abs() < 1e-6,
@@ -647,6 +646,17 @@ fn test_verified_requires_inspectable_comparison() {
             assert!((edge_field.spatial[0][1] - 2.4).abs() < 1e-6,
                 "E[e1] should be ~2.4; got {}", edge_field.spatial[0][1]);
             assert!(parameter_provenance.is_verified());
+
+            // Session evaluated comparisons against actual kernel output.
+            assert_eq!(evaluated_comparisons.len(), 2,
+                "two comparisons declared; two should be evaluated");
+            assert!(evaluated_comparisons.iter().all(|c| c.passes()),
+                "all comparisons should pass for synthetic fixture");
+            // label_with_evaluation reflects actual kernel output.
+            assert_eq!(
+                parameter_provenance.label_with_evaluation(&evaluated_comparisons),
+                "OBSERVATIONALLY VERIFIED"
+            );
         }
         other => panic!("expected Complete(RelationalOutput), got {}",
             match other {
@@ -668,11 +678,12 @@ fn test_verified_requires_inspectable_comparison() {
 #[test]
 fn test_failed_correspondence_does_not_rewrite_math() {
     // s→t→u, x=[3,5,2], ρ_base=0.8, χ₀=1.0 → E[e0]≈2.6
-    // Declare observed=3.0 (does not match calculated 2.6) with tolerance=0.01.
+    // Declare observed=3.0 (deliberately mismatches kernel output 2.6) tol=0.01.
+    // The session detects the mismatch; the mathematical result is not rewritten.
     let rec = VerificationRecord {
         evidence: EvidenceRecord::new(
             "Synthetic fixture — deliberate mismatch to test correspondence failure. \
-             Observed R[e0] declared as 3.0; kernel calculates 2.6."
+             Observed R[e0] declared as 3.0; kernel computes ~2.6."
         ),
         declared_observables: vec![
             DeclaredObservable {
@@ -682,28 +693,25 @@ fn test_failed_correspondence_does_not_rewrite_math() {
                 measurement_provenance: "Synthetic fixture — deliberate mismatch".into(),
             },
         ],
-        parameter_derivation: "ρ_base=0.8, χ₀=1.0 (not matched to observed 3.0)".into(),
-        verification_source: "Task #10 mismatch fixture — internal".into(),
+        parameter_derivation: "ρ_base=0.8, χ₀=1.0 (not derived from declared 3.0)".into(),
+        verification_source: "Task #11 mismatch fixture — internal".into(),
         comparisons: vec![
             ObservationalComparison {
-                label: "R[e0]".into(),
-                observed: 3.0,
-                calculated: 2.6,
-                tolerance: 0.01,  // |3.0 - 2.6| = 0.4 >> 0.01 → FAIL
+                label:      "R[e0]".into(),
+                observed:   3.0,   // declared: 3.0
+                tolerance:  0.01,  // |3.0 − 2.6| ≈ 0.4 >> 0.01 → FAIL
+                edge_index: 0,
+                component:  0,
+                // No `calculated` — session looks this up from actual kernel output
             },
         ],
         open_items: vec![],
     };
 
-    // is_fully_verified() must be false; failed_comparisons() must be non-empty.
-    assert!(!rec.is_fully_verified(), "comparison must fail");
-    assert_eq!(rec.failed_comparisons().len(), 1);
-    assert!((rec.failed_comparisons()[0].residual() - (3.0 - 2.6)).abs() < 1e-9);
-
     let prov = ParameterProvenance::ObservationallyVerified(rec);
-    // Label reflects failure without dropping the ObservationallyVerified state.
-    assert_eq!(prov.label(), "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED");
-    assert!(prov.is_verified(), "variant is still ObservationallyVerified");
+    // label() alone does not know about kernel output → base label only.
+    assert_eq!(prov.label(), "OBSERVATIONALLY VERIFIED");
+    assert!(prov.is_verified());
 
     let mut session = Session::new();
     session.declare_topology(stu_topology());
@@ -713,7 +721,7 @@ fn test_failed_correspondence_does_not_rewrite_math() {
 
     match session.execute() {
         SessionOutput::Complete(ExecutionResult::RelationalOutput {
-            edge_field, ..
+            edge_field, parameter_provenance, evaluated_comparisons, ..
         }) => {
             // Kernel result stands at ~2.6; NOT rewritten to the declared 3.0.
             assert!((edge_field.spatial[0][0] - 2.6).abs() < 1e-6,
@@ -721,6 +729,20 @@ fn test_failed_correspondence_does_not_rewrite_math() {
                 edge_field.spatial[0][0]);
             assert!((edge_field.spatial[0][0] - 3.0).abs() > 0.3,
                 "result must differ from declared observed value 3.0");
+
+            // Session detected the mismatch via evaluated_comparisons.
+            assert_eq!(evaluated_comparisons.len(), 1);
+            let ec = &evaluated_comparisons[0];
+            assert!(!ec.passes(), "comparison must fail");
+            assert!((ec.observed - 3.0).abs() < 1e-9, "observed = 3.0");
+            assert!((ec.calculated - 2.6).abs() < 1e-3, "calculated ≈ 2.6 from kernel");
+            assert!((ec.residual() - (3.0 - 2.6)).abs() < 1e-3);
+
+            // label_with_evaluation reflects actual mismatch.
+            assert_eq!(
+                parameter_provenance.label_with_evaluation(&evaluated_comparisons),
+                "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED"
+            );
         }
         other => panic!("expected Complete(RelationalOutput), got {}",
             match other {
@@ -739,19 +761,22 @@ fn test_failed_correspondence_does_not_rewrite_math() {
 
 #[test]
 fn test_verification_record_with_open_items_not_fully_verified() {
+    // open_items present → label_with_evaluation returns CORRESPONDENCE FAILED
+    // even when all evaluated comparisons pass.
     let rec = VerificationRecord {
         evidence: EvidenceRecord::new(
             "Synthetic fixture — open item present to test surfacing."
         ),
         declared_observables: vec![],
         parameter_derivation: "illustrative derivation".into(),
-        verification_source: "Task #10 open-item fixture".into(),
+        verification_source: "Task #11 open-item fixture".into(),
         comparisons: vec![
             ObservationalComparison {
-                label: "R[e0]".into(),
-                observed: 2.6,
-                calculated: 2.6,
-                tolerance: 1e-3,
+                label:      "R[e0]".into(),
+                observed:   2.6,
+                tolerance:  1e-3,
+                edge_index: 0,
+                component:  0,
             },
         ],
         open_items: vec![
@@ -759,15 +784,40 @@ fn test_verification_record_with_open_items_not_fully_verified() {
         ],
     };
 
-    // Comparisons pass, but open_items is non-empty → not fully verified.
-    assert!(rec.failed_comparisons().is_empty(), "comparison passes");
-    assert!(!rec.is_fully_verified(),
-        "open_items present → not fully verified even if comparisons pass");
+    assert!(!rec.open_items.is_empty(), "open_items present");
 
     let prov = ParameterProvenance::ObservationallyVerified(rec);
-    // Label reflects that verification is not complete.
-    assert_eq!(prov.label(), "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED",
-        "non-fully-verified ObservationallyVerified should carry CORRESPONDENCE FAILED label");
+    assert!(prov.is_verified());
+
+    // Execute a session; comparison passes (observed=2.6 matches kernel ~2.6).
+    let mut session = Session::new();
+    session.declare_topology(stu_topology());
+    session.declare_field(stu_field_345());
+    session.declare_rho(0.8, 1.0, prov);
+    session.declare_cc(vec![], vec![]);
+
+    match session.execute() {
+        SessionOutput::Complete(ExecutionResult::RelationalOutput {
+            parameter_provenance, evaluated_comparisons, ..
+        }) => {
+            // Comparison passes (kernel output ≈ 2.6 matches declared 2.6).
+            assert!(evaluated_comparisons.iter().all(|c| c.passes()),
+                "comparison passes");
+            // But open_items is non-empty → label_with_evaluation must flag it.
+            assert_eq!(
+                parameter_provenance.label_with_evaluation(&evaluated_comparisons),
+                "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED",
+                "open_items present → not fully verified even when comparisons pass"
+            );
+        }
+        other => panic!("expected Complete(RelationalOutput), got {}",
+            match other {
+                SessionOutput::Complete(_) => "Complete(other)",
+                SessionOutput::Partial { .. } => "Partial",
+                SessionOutput::Blocked(_) => "Blocked",
+            }
+        ),
+    }
 }
 
 // ─── Provenance trace: three states ──────────────────────────────────────────

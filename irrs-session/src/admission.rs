@@ -95,11 +95,14 @@ pub struct DeclaredObservable {
 
 // ─── ObservationalComparison ─────────────────────────────────────────────────
 
-/// A comparison between a declared observable and a kernel-calculated result.
+/// A declared comparison target: an observed quantity and its acceptable tolerance.
 ///
-/// Declares the tolerance as a domain-supplied value distinct from
-/// `DETECTION_TOLERANCE`. Physical measurement tolerances are set by the
-/// domain; numerical precision tolerances are set by the session layer.
+/// Supplied in a `VerificationRecord` before execution. The session looks up the
+/// actual kernel-calculated value (by `component` and `edge_index`) after running
+/// R and builds an `EvaluatedComparison`. The caller does not supply `calculated`.
+///
+/// Tolerance is a domain-declared measurement precision, distinct from
+/// `DETECTION_TOLERANCE` (a numerical precision parameter for the session layer).
 /// These must not be conflated.
 #[derive(Debug, Clone)]
 pub struct ObservationalComparison {
@@ -107,14 +110,35 @@ pub struct ObservationalComparison {
     pub label: String,
     /// The independently declared observed value.
     pub observed: f64,
-    /// The kernel-calculated value for the same quantity.
+    /// Domain-declared measurement tolerance. Not `DETECTION_TOLERANCE`.
+    pub tolerance: f64,
+    /// Which edge in the kernel output to compare against.
+    pub edge_index: usize,
+    /// Which component in the kernel output to compare against. Usually 0.
+    pub component: usize,
+}
+
+// ─── EvaluatedComparison ─────────────────────────────────────────────────────
+
+/// Result of a session-executed comparison: observed (declared) vs calculated
+/// (actual kernel output).
+///
+/// Produced by the session after running R. `calculated` is the kernel's actual
+/// result at `ObservationalComparison.edge_index` / `component`; it is never
+/// supplied by the caller.
+#[derive(Debug, Clone)]
+pub struct EvaluatedComparison {
+    /// Label from the declared `ObservationalComparison`.
+    pub label: String,
+    /// The independently declared observed value.
+    pub observed: f64,
+    /// The kernel-calculated value at the declared edge/component index.
     pub calculated: f64,
-    /// Domain-declared tolerance for this comparison.
-    /// Not `DETECTION_TOLERANCE`; set by the domain for its measurement precision.
+    /// Domain-declared tolerance, carried from the declared comparison.
     pub tolerance: f64,
 }
 
-impl ObservationalComparison {
+impl EvaluatedComparison {
     /// Returns true iff |observed − calculated| ≤ tolerance.
     pub fn passes(&self) -> bool {
         (self.observed - self.calculated).abs() <= self.tolerance
@@ -168,23 +192,10 @@ pub struct VerificationRecord {
     pub open_items: Vec<String>,
 }
 
-impl VerificationRecord {
-    /// Returns true iff all comparisons pass and there are no open items.
-    ///
-    /// Note: this reflects the record's declared content, not an external
-    /// evaluation. A record that claims to pass is only as reliable as
-    /// the evidence and comparisons it contains.
-    pub fn is_fully_verified(&self) -> bool {
-        !self.comparisons.is_empty()
-            && self.comparisons.iter().all(|c| c.passes())
-            && self.open_items.is_empty()
-    }
-
-    /// Returns comparisons that failed (|observed − calculated| > tolerance).
-    pub fn failed_comparisons(&self) -> Vec<&ObservationalComparison> {
-        self.comparisons.iter().filter(|c| !c.passes()).collect()
-    }
-}
+// Note: is_fully_verified() and failed_comparisons() are intentionally absent.
+// Verification status depends on actual kernel output, not on declared content.
+// The session computes EvaluatedComparison values after executing R and
+// determines pass/fail from those. See ParameterProvenance::label_with_evaluation().
 
 // ─── ParameterProvenance ─────────────────────────────────────────────────────
 
@@ -259,17 +270,37 @@ impl ParameterProvenance {
     }
 
     /// Primary provenance label for trace output.
+    ///
+    /// For `ObservationallyVerified`, always returns "OBSERVATIONALLY VERIFIED".
+    /// Use `label_with_evaluation` to include CORRESPONDENCE FAILED status,
+    /// which requires actual kernel-computed values.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Illustrative => "ILLUSTRATIVE",
             Self::EvidenceDeclared(_) => "EVIDENCE DECLARED — VERIFICATION OPEN",
+            Self::ObservationallyVerified(_) => "OBSERVATIONALLY VERIFIED",
+        }
+    }
+
+    /// Provenance label that accounts for actual kernel output.
+    ///
+    /// For `ObservationallyVerified`: returns CORRESPONDENCE FAILED if any
+    /// evaluated comparison fails or if the VerificationRecord has open items.
+    /// `evaluated` must be the comparisons produced by the session after
+    /// executing R — not caller-supplied calculated values.
+    pub fn label_with_evaluation(&self, evaluated: &[EvaluatedComparison]) -> &'static str {
+        match self {
             Self::ObservationallyVerified(rec) => {
-                if rec.is_fully_verified() {
+                let comparisons_pass = !evaluated.is_empty()
+                    && evaluated.iter().all(|c| c.passes());
+                let fully_verified = comparisons_pass && rec.open_items.is_empty();
+                if fully_verified {
                     "OBSERVATIONALLY VERIFIED"
                 } else {
                     "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED"
                 }
             }
+            _ => self.label(),
         }
     }
 }
@@ -349,10 +380,15 @@ pub enum AdmissionResult {
 /// Note: `EdgeField` does not implement `Debug`; this enum is not `Debug`.
 pub enum ExecutionResult {
     RelationalOutput {
-        edge_field:           EdgeField,
-        parameter_provenance: ParameterProvenance,
-        detection_indicators: Vec<f64>,
-        kernel_open:          Vec<KernelOpenCondition>,
+        edge_field:             EdgeField,
+        parameter_provenance:   ParameterProvenance,
+        detection_indicators:   Vec<f64>,
+        kernel_open:            Vec<KernelOpenCondition>,
+        /// Comparisons between declared observables and actual kernel output.
+        /// Non-empty only when provenance is ObservationallyVerified.
+        /// `calculated` in each entry is the kernel's actual R value — not
+        /// a caller-supplied value.
+        evaluated_comparisons:  Vec<EvaluatedComparison>,
     },
 
     /// R operator executed; antisymmetric term ≤ DETECTION_TOLERANCE on every
@@ -362,9 +398,11 @@ pub enum ExecutionResult {
     /// observable is. Physical confirmation requires an independent
     /// observational comparison outside this layer.
     CalculatedZero {
-        edge_field:           EdgeField,
-        parameter_provenance: ParameterProvenance,
-        kernel_open:          Vec<KernelOpenCondition>,
+        edge_field:             EdgeField,
+        parameter_provenance:   ParameterProvenance,
+        kernel_open:            Vec<KernelOpenCondition>,
+        /// Same semantics as in RelationalOutput.
+        evaluated_comparisons:  Vec<EvaluatedComparison>,
     },
 }
 

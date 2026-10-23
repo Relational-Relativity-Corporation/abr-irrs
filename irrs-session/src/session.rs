@@ -26,13 +26,10 @@ use irrs_kernel::operators::{
 };
 
 use crate::admission::{
-    AdmissionResult, ExecutionResult, KernelOpenCondition,
+    AdmissionResult, EvaluatedComparison, ExecutionResult, KernelOpenCondition,
     OpenCondition, ParameterProvenance, SessionOutput,
     DETECTION_TOLERANCE,
 };
-// VerificationRecord and comparison types used only in trace_report.
-#[allow(unused_imports)]
-use crate::admission::VerificationRecord;
 
 // ─── Session ─────────────────────────────────────────────────────────────────
 
@@ -326,18 +323,43 @@ impl Session {
         let prov        = provenance.clone();
         let kernel_open = Self::kernel_open_conditions();
 
+        // Evaluate declared comparisons against actual kernel output.
+        // Only populated when provenance is ObservationallyVerified.
+        // `calculated` comes from the kernel result, never from the caller.
+        let evaluated_comparisons: Vec<EvaluatedComparison> = match provenance {
+            ParameterProvenance::ObservationallyVerified(rec) => {
+                rec.comparisons.iter().map(|c| {
+                    let calculated =
+                        if c.component < r.k && c.edge_index < r.spatial[c.component].len() {
+                            r.spatial[c.component][c.edge_index]
+                        } else {
+                            f64::NAN  // out-of-bounds declaration → fails comparison
+                        };
+                    EvaluatedComparison {
+                        label:      c.label.clone(),
+                        observed:   c.observed,
+                        calculated,
+                        tolerance:  c.tolerance,
+                    }
+                }).collect()
+            }
+            _ => vec![],
+        };
+
         if all_zero {
             SessionOutput::Complete(ExecutionResult::CalculatedZero {
-                edge_field:           r,
-                parameter_provenance: prov,
+                edge_field:            r,
+                parameter_provenance:  prov,
                 kernel_open,
+                evaluated_comparisons,
             })
         } else {
             SessionOutput::Complete(ExecutionResult::RelationalOutput {
-                edge_field:           r,
-                parameter_provenance: prov,
+                edge_field:            r,
+                parameter_provenance:  prov,
                 detection_indicators,
                 kernel_open,
+                evaluated_comparisons,
             })
         }
     }
@@ -352,6 +374,19 @@ impl Session {
     ///   KERNEL OPEN — unresolved Kernel V8 mathematical conditions
     ///   RESULT      — Complete (RelationalOutput / CalculatedZero) or Partial
     pub fn trace_report(&self, output: &SessionOutput) {
+        // Extract session-evaluated comparisons (actual kernel output vs declared).
+        // These are used both in the M-SUPPLIED PARAMETERS section (for the
+        // comparison table) and for the result label.
+        let evaluated: &[EvaluatedComparison] = match output {
+            SessionOutput::Complete(ExecutionResult::RelationalOutput {
+                evaluated_comparisons, ..
+            })
+            | SessionOutput::Complete(ExecutionResult::CalculatedZero {
+                evaluated_comparisons, ..
+            }) => evaluated_comparisons.as_slice(),
+            _ => &[],
+        };
+
         println!();
         println!("═══════════════════════════════════════════════════════");
         println!("  IRRS SESSION — EXECUTION TRACE");
@@ -438,28 +473,29 @@ impl Session {
                                 obs.label, obs.value, unit, obs.measurement_provenance);
                         }
                     }
-                    if !rec.comparisons.is_empty() {
+                    // Show session-evaluated comparisons (actual kernel output).
+                    if !evaluated.is_empty() {
                         println!();
-                        println!("  OBSERVATIONAL COMPARISONS:");
-                        for cmp in &rec.comparisons {
-                            let status = if cmp.passes() { "PASS" } else { "FAIL" };
+                        println!("  OBSERVATIONAL COMPARISONS (kernel output vs declared):");
+                        let mut n_failed = 0usize;
+                        for cmp in evaluated {
+                            let status = if cmp.passes() { "PASS" } else { n_failed += 1; "FAIL" };
                             println!("    {}  observed={:.6}  calculated={:.6}  \
                                      residual={:+.6}  tol={:.2e}  [{}]",
                                 cmp.label, cmp.observed, cmp.calculated,
                                 cmp.residual(), cmp.tolerance, status);
                         }
-                        let failed = rec.failed_comparisons();
-                        if !failed.is_empty() {
+                        if n_failed > 0 {
                             println!();
-                            println!("  ⚠ FAILED COMPARISONS: {}", failed.len());
+                            println!("  ⚠ FAILED COMPARISONS: {}", n_failed);
                             println!("  The kernel-calculated result stands as computed.");
-                            println!("  Declared observables and calculated values disagree");
+                            println!("  Declared observables and actual kernel output disagree");
                             println!("  beyond declared tolerance. The mathematical result has");
                             println!("  not been rewritten to match the declared observable.");
                         }
-                    } else {
+                    } else if rec.comparisons.is_empty() {
                         println!();
-                        println!("  COMPARISONS: none recorded — correspondence OPEN");
+                        println!("  COMPARISONS: none declared — correspondence OPEN");
                     }
                     if !rec.open_items.is_empty() {
                         println!();
@@ -521,10 +557,11 @@ impl Session {
                 let rel = self.rel.as_ref().unwrap();
                 match result {
                     ExecutionResult::RelationalOutput {
-                        edge_field, detection_indicators, parameter_provenance, ..
+                        edge_field, detection_indicators, parameter_provenance,
+                        evaluated_comparisons, ..
                     } => {
                         println!("  RESULT: ADMITTED → RELATIONAL OUTPUT [{}]",
-                            parameter_provenance.label());
+                            parameter_provenance.label_with_evaluation(evaluated_comparisons));
                         println!();
                         println!("  R[e] = E[e] (assembled edge field, all components):");
                         for c in 0..edge_field.k {
@@ -537,9 +574,11 @@ impl Session {
                         println!("  Detection tolerance: {}", DETECTION_TOLERANCE);
                         println!("  (Numerical precision threshold — not a physical detection limit.)");
                     }
-                    ExecutionResult::CalculatedZero { edge_field, parameter_provenance, .. } => {
+                    ExecutionResult::CalculatedZero {
+                        edge_field, parameter_provenance, evaluated_comparisons, ..
+                    } => {
                         println!("  RESULT: ADMITTED → CALCULATED ZERO [{}]",
-                            parameter_provenance.label());
+                            parameter_provenance.label_with_evaluation(evaluated_comparisons));
                         println!("  The kernel computed zero antisymmetric term on all edges.");
                         println!("  This is a kernel output, not a physical observation.");
                         println!("  Independent observational comparison is required to assert");
