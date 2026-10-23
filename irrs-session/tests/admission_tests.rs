@@ -455,6 +455,91 @@ fn test_kernel_open_conditions_surfaced_at_complete_execution() {
     }
 }
 
+// ─── Execution trace: partial then full execution ────────────────────────────
+//
+// Demonstrates all four SessionOutput variants in order.
+// Run with: cargo test -p irrs-session -- trace_execution_demo --nocapture
+
+#[test]
+fn trace_execution_demo() {
+    // ── TRACE 1: Partial execution — ρ not declared ───────────────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE 1 — PARTIAL EXECUTION: ρ not declared              ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!("  Verifier correction #3: topology + field declared → A and B");
+    println!("  computed and exposed. R blocked; open_r = [RhoNotDeclared].");
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(NodeField::new(vec![vec![3.0, 5.0, 2.0]]));
+    s.declare_cc(vec![], vec![]);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(output, SessionOutput::Partial { .. }));
+
+    // ── TRACE 2: Dimension mismatch — blocked ─────────────────────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE 2 — BLOCKED: dimension mismatch (field 2, topo 3)  ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!("  Verifier correction #5: field.n=2 ≠ topology.n_nodes=3");
+    println!("  → DimensionMismatch, blocked before any operator runs.");
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(NodeField::new(vec![vec![3.0, 5.0]]));
+    s.declare_rho(0.8, 1.0, ParameterProvenance::Illustrative);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(output, SessionOutput::Blocked(_)));
+
+    // ── TRACE 3: Complete — illustrative ρ ───────────────────────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE 3 — COMPLETE: illustrative ρ_base=0.8, χ₀=1.0     ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(NodeField::new(vec![vec![3.0, 5.0, 2.0]]));
+    s.declare_rho(0.8, 1.0, ParameterProvenance::Illustrative);
+    s.declare_cc(vec![], vec![]);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(&output, SessionOutput::Complete(ExecutionResult::RelationalOutput { .. })));
+
+    // ── TRACE 4: Complete — ObservationallyEstablished ────────────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE 4 — COMPLETE: observationally established           ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!("  Verifier correction #2: EvidenceRecord required; enum");
+    println!("  variant alone is not verification.");
+    let evidence = EvidenceRecord::new(
+        "ρ_base=0.75 and χ₀=1.2 fitted to R[e0]=2.51, R[e1]=2.38 \
+         from measurement run 2026-10-20 at node field x=[3.1, 5.2, 1.9]."
+    ).with_reference("run-2026-10-20.dat");
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(NodeField::new(vec![vec![3.0, 5.0, 2.0]]));
+    s.declare_rho(0.75, 1.2, ParameterProvenance::ObservationallyEstablished(evidence));
+    s.declare_cc(vec![], vec![]);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(&output, SessionOutput::Complete(ExecutionResult::RelationalOutput { .. })));
+
+    // ── TRACE 5: CalculatedZero — flat field ─────────────────────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE 5 — CALCULATED ZERO: flat field x=[5,5,5]          ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!("  Verifier correction #1: CalculatedZero names what the kernel");
+    println!("  computed — not a physical observation.");
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(NodeField::new(vec![vec![5.0, 5.0, 5.0]]));
+    s.declare_rho(0.8, 1.0, ParameterProvenance::Illustrative);
+    s.declare_cc(vec![], vec![]);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(&output, SessionOutput::Complete(ExecutionResult::CalculatedZero { .. })));
+
+    println!("\n  All five traces completed.");
+}
+
 // ─── DETECTION_TOLERANCE is a named constant ─────────────────────────────────
 //
 // Verifier correction #4: tolerance must be explicit, not a magic number.
