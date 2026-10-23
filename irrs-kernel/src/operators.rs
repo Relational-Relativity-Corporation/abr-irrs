@@ -190,7 +190,20 @@ pub struct PersistenceOutput {
 // ─── M-declaration enforcement ────────────────────────────────────────────────
 
 /// Verify that ρ_base and χ₀ were declared by M.
+///
 /// The kernel holds no value for either and supplies no default.
+/// This is not a missing implementation — it is the correct structure.
+///
+/// ρ_base (dimensionless ceiling) and χ₀ (reference scale for saturation)
+/// are domain-specific. The complexity and characteristic scales of the
+/// declared domain determine their applicable values. A hydrogen emission edge,
+/// a geomagnetic current layer, and a neural coupling site each inhabit a
+/// different relational scale and will have incommensurable values.
+///
+/// An application layer that assigns the same ρ_base and χ₀ across
+/// different physical domains without independent M-declaration for each
+/// is not applying the kernel correctly.
+///
 /// Section 11.3 of kernel_reference.md.
 pub fn require_rho_declaration(rho_base: f64, chi_0: f64) {
     assert!(
@@ -204,6 +217,18 @@ pub fn require_rho_declaration(rho_base: f64, chi_0: f64) {
 }
 
 /// Verify that cc was declared by M for every declared component pair.
+///
+/// Cross-topology coupling coefficients (cc) are domain-specific for the
+/// same reason ρ_base and χ₀ are: the coupling between two observable
+/// families (e.g., spatial and angular momentum, electric and magnetic,
+/// position and momentum) is determined by the relational structure of
+/// the declared domain, not by any universal value. cc = 0.5 as a fixed
+/// default was retired at Kernel V7.1 precisely because it imposed
+/// cross-domain uniformity where none is warranted.
+///
+/// An empty cc with empty pairs is valid: it declares that no cross-topology
+/// coupling is applicable in this domain at this declaration.
+///
 /// Section 11.3 of kernel_reference.md.
 pub fn require_cc_declaration(cc: &[f64], pairs: &[(usize, usize)]) {
     assert_eq!(
@@ -224,8 +249,17 @@ pub fn require_cc_declaration(cc: &[f64], pairs: &[(usize, usize)]) {
 /// ρ[i] = ρ_base · χ[i] / (χ₀ + χ[i])
 /// ρ[e] = ρ[source(e)]
 ///
+/// Domain-specificity: χ[i] is calculable from declared observables alone.
+/// ρ_base and χ₀ are not — they are domain-specific parameters that M must
+/// supply. See `require_rho_declaration` for the structural reason.
+///
 /// OPEN: max-selection rule requires Origin declaration (section 11.2, 18).
+///   This is a separate question from domain-specificity: even after M declares
+///   ρ_base and χ₀ for this domain, the rule for combining χ over multiple
+///   components and incident edges remains unconfirmed in the kernel reference.
 /// OPEN: saturating form requires Origin declaration (section 11.2, 18).
+///   The functional form ρ_base · χ/(χ₀+χ) is stated but its derivation is
+///   not closed. A different form would still require domain-specific parameters.
 pub fn compute_rho_primary(
     delta: &PrimaryEdgeField,
     rel: &DeclaredRelations,
@@ -259,6 +293,10 @@ pub fn compute_rho_primary(
 /// χ[i] = max |A(x)[c][e]| over all components c and edges e incident to i.
 /// ρ[i] = ρ_base · χ[i] / (χ₀ + χ[i])
 /// ρ[e] = ρ[source(e)]
+///
+/// Domain-specificity: χ[i] is calculable from declared x alone.
+/// ρ_base and χ₀ are domain-specific; see `require_rho_declaration`.
+/// The same OPEN conditions as `compute_rho_primary` apply.
 pub fn compute_rho(
     a_field: &EdgeField,
     rel: &DeclaredRelations,
@@ -289,6 +327,11 @@ pub fn compute_rho(
 
 /// Compute ρ for persistence operators.
 /// Driven by A_persistence magnitudes.
+///
+/// Domain-specificity applies identically: ρ_base and χ₀ are domain-specific
+/// regardless of whether the input field is a spatial A or a persistence A_p.
+/// The same declared values from M apply across both kernel paths within a
+/// single declared domain.
 pub fn compute_rho_persistence(
     a_persistence: &[Vec<f64>],
     rel: &DeclaredRelations,
