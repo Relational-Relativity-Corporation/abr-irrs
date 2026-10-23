@@ -1,0 +1,9 @@
+[package]
+name = "irrs-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+description = "IRRS end-to-end test runner — Tests A through E (handoff Oct 23 2026)"
+
+[dependencies]
+irrs-kernel  = { path = "../../irrs-kernel" }
+irrs-session = { path = "../../irrs-session" }
