@@ -1,10 +1,17 @@
 /// IRRS Session — D/M Declaration and Kernel Execution
 ///
-/// Accepts a bounded D and M, checks admission, executes Kernel V8 operators,
-/// and reports the mathematical trace with parameter provenance.
+/// Accepts a bounded D and M, validates declarations, checks admission,
+/// executes Kernel V8 operators, and reports the mathematical trace with
+/// parameter provenance.
 ///
 /// Session is stateful: declarations accumulate until execute() is called.
-/// No operator is applied before admit() returns Admitted.
+/// No operator is applied before prerequisites are satisfied.
+///
+/// Execution order:
+///   1. Pre-execution validation (dimensions, parameter admissibility)
+///   2. Topology + interior locus check → Blocked if insufficient
+///   3. A and B computed (topology + field sufficient)
+///   4. R prerequisites check → Partial if ρ unmet, Complete otherwise
 ///
 /// Continuous Relational Process Rule: every evaluation enters an already-
 /// existing process. This session layer does not construct synthetic cold
@@ -19,7 +26,9 @@ use irrs_kernel::operators::{
 };
 
 use crate::admission::{
-    AdmissionResult, ExecutionResult, OpenCondition, ParameterProvenance,
+    AdmissionResult, ExecutionResult, KernelOpenCondition,
+    OpenCondition, ParameterProvenance, SessionOutput,
+    DETECTION_TOLERANCE,
 };
 
 // ─── Session ─────────────────────────────────────────────────────────────────
@@ -29,10 +38,11 @@ use crate::admission::{
 /// Workflow:
 ///   1. `declare_topology` — supply DeclaredRelations
 ///   2. `declare_field`    — supply NodeField
-///   3. `declare_rho`      — supply ρ_base, χ₀, and provenance label
+///   3. `declare_rho`      — supply ρ_base, χ₀, and ParameterProvenance
+///                           (ObservationallyEstablished requires EvidenceRecord)
 ///   4. `declare_cc`       — supply cross-topology coupling (may be empty)
 ///   5. `admit`            — check prerequisites; inspect OpenConditions if any
-///   6. `execute`          — run frozen Kernel V8 operators; get ExecutionResult
+///   6. `execute`          — run frozen Kernel V8 operators; get SessionOutput
 ///   7. `trace_report`     — print mathematical trace and provenance
 pub struct Session {
     rel:   Option<DeclaredRelations>,
@@ -66,7 +76,8 @@ impl Session {
     /// Declare the node field (M: O → D).
     ///
     /// data[c][i] is the numerical projection through M at component c, node i.
-    /// All values must be finite (∈ D).
+    /// All values must be finite (∈ D). field.n must equal the number of nodes
+    /// in the declared topology; mismatches are caught at execute() time.
     pub fn declare_field(&mut self, field: NodeField) {
         self.field = Some(field);
     }
@@ -78,83 +89,147 @@ impl Session {
     ///
     /// `provenance` must honestly describe how the values were established:
     ///   - `Illustrative` — chosen to demonstrate operator mechanics
-    ///   - `ObservationallyEstablished` — calibrated against observable R output
+    ///   - `ObservationallyEstablished(evidence)` — calibrated against
+    ///     independently observable R output; an `EvidenceRecord` is required
+    ///
+    /// Parameter admissibility (χ₀ > 0, ρ_base ≥ 0) is checked at execute().
     pub fn declare_rho(
         &mut self,
-        rho_base: f64,
-        chi_0:    f64,
+        rho_base:   f64,
+        chi_0:      f64,
         provenance: ParameterProvenance,
     ) {
         self.rho = Some((rho_base, chi_0, provenance));
     }
 
-    /// Declare cross-topology coupling values cc with corresponding edge pairs.
+    /// Declare cross-topology coupling values cc with corresponding component pairs.
     ///
     /// The fixed cc = 0.5 default was retired at Kernel V7.1. Coupling
     /// between families must be M-declared per domain. If the declared
-    /// topology has no cross-family edges, pass empty vecs.
+    /// topology has no cross-family edges, pass empty vecs (the default).
     pub fn declare_cc(&mut self, cc: Vec<f64>, pairs: Vec<(usize, usize)>) {
         self.cc    = cc;
         self.pairs = pairs;
+    }
+
+    // ─── Kernel OPEN conditions ───────────────────────────────────────────────
+
+    /// Return the Kernel V8 mathematical conditions that remain unresolved
+    /// regardless of session declarations. These are always present when R
+    /// is evaluated; they do not block execution but must be surfaced.
+    pub fn kernel_open_conditions() -> Vec<KernelOpenCondition> {
+        vec![
+            KernelOpenCondition::RhoMaxSelectionRule,
+            KernelOpenCondition::RhoSaturatingForm,
+        ]
+    }
+
+    // ─── Pre-execution validation ─────────────────────────────────────────────
+
+    /// Validate declared values before any operator is called.
+    ///
+    /// Checks:
+    ///   - field.n == topology.n_nodes (dimension compatibility)
+    ///   - χ₀ > 0 (strictly positive; appears as denominator in ρ formula)
+    ///   - ρ_base ≥ 0 (dimensionless ceiling; must be non-negative)
+    ///
+    /// Returns a list of `OpenCondition::DimensionMismatch` or
+    /// `OpenCondition::InvalidRhoParameter` items. Empty means valid.
+    fn validate(&self) -> Vec<OpenCondition> {
+        let mut errors: Vec<OpenCondition> = vec![];
+
+        // Dimension check: field nodes must equal topology nodes.
+        if let (Some(rel), Some(field)) = (&self.rel, &self.field) {
+            if field.n != rel.n_nodes {
+                errors.push(OpenCondition::DimensionMismatch {
+                    field_nodes:    field.n,
+                    topology_nodes: rel.n_nodes,
+                });
+            }
+        }
+
+        // ρ parameter admissibility.
+        if let Some((rho_base, chi_0, _)) = &self.rho {
+            if *chi_0 <= 0.0 {
+                errors.push(OpenCondition::InvalidRhoParameter(format!(
+                    "χ₀ must be strictly positive (got {}); it appears as a denominator \
+                     in ρ[e] = ρ_base·χ[src(e)] / (χ₀ + χ[src(e)])",
+                    chi_0
+                )));
+            }
+            if *rho_base < 0.0 {
+                errors.push(OpenCondition::InvalidRhoParameter(format!(
+                    "ρ_base must be non-negative (got {}); it is a dimensionless ceiling",
+                    rho_base
+                )));
+            }
+        }
+
+        errors
+    }
+
+    // ─── Interior locus check ─────────────────────────────────────────────────
+
+    fn has_interior_locus(rel: &DeclaredRelations) -> bool {
+        (0..rel.n_nodes).any(|t| {
+            let has_incoming = (0..rel.n_edges()).any(|e| rel.tgt(e) == t);
+            let has_outgoing = (0..rel.n_edges()).any(|f| rel.src(f) == t);
+            has_incoming && has_outgoing
+        })
     }
 
     // ─── Admission check ─────────────────────────────────────────────────────
 
     /// Check whether A→B→R is admissible given current declarations.
     ///
-    /// Returns `Admitted` if all prerequisites are met.
+    /// Returns `Admitted` if all prerequisites are met (including dimension
+    /// validation and ρ parameter admissibility).
     /// Returns `Open(conditions)` listing every unmet prerequisite.
+    ///
+    /// `Admitted` also carries `kernel_open` — the Kernel V8 mathematical
+    /// questions that remain unresolved regardless of session declarations.
     ///
     /// Does not execute any operator. Does not fabricate values.
     pub fn admit(&self) -> AdmissionResult {
+        // Validation errors block admission.
+        let validation_errors = self.validate();
+        if !validation_errors.is_empty() {
+            return AdmissionResult::Open(validation_errors);
+        }
+
         let mut open: Vec<OpenCondition> = vec![];
 
-        // Prerequisite 1: topology declared
+        // Prerequisite 1: topology declared.
         let rel = match &self.rel {
             Some(r) => r,
             None => {
                 open.push(OpenCondition::TopologyNotDeclared);
-                // Without topology we cannot check the interior locus.
-                // Report all other missing declarations before returning.
-                if self.field.is_none() {
-                    open.push(OpenCondition::NodeFieldNotDeclared);
-                }
-                if self.rho.is_none() {
-                    open.push(OpenCondition::RhoNotDeclared);
-                }
+                if self.field.is_none() { open.push(OpenCondition::NodeFieldNotDeclared); }
+                if self.rho.is_none()   { open.push(OpenCondition::RhoNotDeclared); }
                 return AdmissionResult::Open(open);
             }
         };
 
-        // Prerequisite 2: interior locus exists
-        //
-        // An interior locus is a node t such that:
-        //   ∃ edge e with tgt(e) = t  AND  ∃ edge f with src(f) = t
-        //   where e ≠ f (independently declared).
-        //
-        // This is the admissibility condition from Kernel V8 §11.
-        let has_interior = (0..rel.n_nodes).any(|t| {
-            let has_incoming = (0..rel.n_edges()).any(|e| rel.tgt(e) == t);
-            let has_outgoing = (0..rel.n_edges()).any(|f| rel.src(f) == t);
-            has_incoming && has_outgoing
-        });
-        if !has_interior {
+        // Prerequisite 2: interior locus.
+        if !Self::has_interior_locus(rel) {
             open.push(OpenCondition::NoInteriorLocus);
         }
 
-        // Prerequisite 3: node field declared
+        // Prerequisite 3: node field.
         if self.field.is_none() {
             open.push(OpenCondition::NodeFieldNotDeclared);
         }
 
-        // Prerequisite 4: ρ_base and χ₀ declared
+        // Prerequisite 4: ρ_base and χ₀.
         if self.rho.is_none() {
             open.push(OpenCondition::RhoNotDeclared);
         }
 
         if open.is_empty() {
-            let provenance = self.rho.as_ref().unwrap().2;
-            AdmissionResult::Admitted { parameter_provenance: provenance }
+            AdmissionResult::Admitted {
+                parameter_provenance: self.rho.as_ref().unwrap().2.clone(),
+                kernel_open:          Self::kernel_open_conditions(),
+            }
         } else {
             AdmissionResult::Open(open)
         }
@@ -164,155 +239,262 @@ impl Session {
 
     /// Execute frozen Kernel V8 operators A→B→R.
     ///
-    /// Returns `Ok(ExecutionResult)` if admitted.
-    /// Returns `Err(conditions)` listing unmet prerequisites otherwise.
+    /// Returns `SessionOutput`:
+    ///   `Complete`  — all prerequisites met; full A→B→R executed
+    ///   `Partial`   — topology and field declared, ρ unmet; A and B computed
+    ///   `Blocked`   — missing declarations or validation failure; nothing computed
+    ///
+    /// When ρ is not declared but topology and field are present, A and B are
+    /// computed and returned in `Partial`. R is not fabricated.
+    ///
+    /// Detection indicators 𝟙[e] are evaluated across ALL declared components
+    /// and ALL edges. DETECTION_TOLERANCE is explicit; see its documentation
+    /// for the distinction between numerical zero and physical detection.
     ///
     /// The kernel operators are called unchanged. No operator mathematics
     /// are implemented in this crate.
-    pub fn execute(&self) -> Result<ExecutionResult, Vec<OpenCondition>> {
-        // Re-check admission; surface conditions if any.
-        match self.admit() {
-            AdmissionResult::Open(conditions) => return Err(conditions),
-            AdmissionResult::Admitted { .. } => {}
+    pub fn execute(&self) -> SessionOutput {
+        // Step 1: pre-execution validation (dimensions, ρ admissibility).
+        let validation_errors = self.validate();
+        if !validation_errors.is_empty() {
+            return SessionOutput::Blocked(validation_errors);
         }
 
-        let rel   = self.rel.as_ref().unwrap();
-        let field = self.field.as_ref().unwrap();
-        let (rho_base, chi_0, provenance) = self.rho.as_ref().unwrap();
+        // Step 2: require topology and field to compute A and B.
+        let (rel, field) = match (&self.rel, &self.field) {
+            (Some(r), Some(f)) => (r, f),
+            _ => {
+                let mut conditions = vec![];
+                if self.rel.is_none()   { conditions.push(OpenCondition::TopologyNotDeclared); }
+                if self.field.is_none() { conditions.push(OpenCondition::NodeFieldNotDeclared); }
+                if self.rho.is_none()   { conditions.push(OpenCondition::RhoNotDeclared); }
+                return SessionOutput::Blocked(conditions);
+            }
+        };
+
+        // Step 3: interior locus required before any operator acts.
+        if !Self::has_interior_locus(rel) {
+            return SessionOutput::Blocked(vec![OpenCondition::NoInteriorLocus]);
+        }
+
+        // A and B are computable. Compute them using frozen kernel operators.
+        // A: edge differences — x[src(e)] − x[tgt(e)] for each edge e.
+        let a = operator_a(field, rel, &self.pairs);
+        // B: accumulates immediate successor A values — B[e] = A[e] + Σ_{succ(e)} A.
+        let b = operator_b(&a, rel);
+
+        // Step 4: require ρ to compute R.
+        let (rho_base, chi_0, provenance) = match &self.rho {
+            Some(triple) => (&triple.0, &triple.1, &triple.2),
+            None => {
+                return SessionOutput::Partial {
+                    a_field:           a,
+                    b_field:           b,
+                    open_r_conditions: vec![OpenCondition::RhoNotDeclared],
+                    kernel_open:       Self::kernel_open_conditions(),
+                };
+            }
+        };
 
         // Validate M-declared parameters through kernel enforcement functions.
+        // (These assert on violation; validation above ensures we reach here safely.)
         require_rho_declaration(*rho_base, *chi_0);
         require_cc_declaration(&self.cc, &self.pairs);
 
-        // Frozen Kernel V8 operators — called unchanged, in canonical A→B→R order.
-        // A: edge differences from declared node field and topology
-        let a = operator_a(field, rel, &self.pairs);
-        // ρ[e] per edge — computed from A magnitudes and M-declared ρ_base, χ₀
+        // ρ[e] per edge — computed from A magnitudes and M-declared ρ_base, χ₀.
         let rho = compute_rho(&a, rel, *rho_base, *chi_0);
-        // B: accumulates successor contributions onto A
-        let b = operator_b(&a, rel);
-        // R: adds antisymmetric circulation term; R = E (final assembled field)
+
+        // R: adds antisymmetric circulation term — R[c][e] = B[c][e] + ρ[e]·(Σ_succ B − Σ_pred B).
         let r = operator_r(&b, rel, &rho, &self.cc);
 
-        // Detection indicators: 𝟙[e] = 1 if R antisymmetric term ≠ 0.
-        // Read from R output. Not a parameter.
-        let tol: f64 = 1e-12;
+        // Detection indicators: 𝟙[e] = 1 iff antisymmetric term is numerically
+        // nonzero for ANY declared component c at edge e.
+        // Checked across ALL components, not only c=0.
         let detection_indicators: Vec<f64> = (0..rel.n_edges())
-            .map(|edge_idx| {
-                // Antisymmetric term = R[e] − B[e] for each component; use c=0.
-                let antis = r.spatial[0][edge_idx] - b.spatial[0][edge_idx];
-                if antis.abs() > tol { 1.0 } else { 0.0 }
+            .map(|e| {
+                let any_nonzero = (0..r.k).any(|c| {
+                    (r.spatial[c][e] - b.spatial[c][e]).abs() > DETECTION_TOLERANCE
+                });
+                if any_nonzero { 1.0 } else { 0.0 }
             })
             .collect();
 
         let all_zero = detection_indicators.iter().all(|&v| v == 0.0);
+        let prov        = provenance.clone();
+        let kernel_open = Self::kernel_open_conditions();
 
         if all_zero {
-            Ok(ExecutionResult::ObservedZero {
+            SessionOutput::Complete(ExecutionResult::CalculatedZero {
                 edge_field:           r,
-                parameter_provenance: *provenance,
+                parameter_provenance: prov,
+                kernel_open,
             })
         } else {
-            Ok(ExecutionResult::RelationalOutput {
+            SessionOutput::Complete(ExecutionResult::RelationalOutput {
                 edge_field:           r,
-                parameter_provenance: *provenance,
+                parameter_provenance: prov,
                 detection_indicators,
+                kernel_open,
             })
         }
     }
 
     // ─── Trace report ────────────────────────────────────────────────────────
 
-    /// Print the mathematical trace and parameter provenance for an execution result.
+    /// Print the mathematical trace and provenance for any SessionOutput.
     ///
     /// This report distinguishes:
-    ///   - CALCULATED quantities (from declared topology and node field alone)
-    ///   - M-SUPPLIED quantities (ρ_base, χ₀) with their provenance label
-    ///   - DETECTION INDICATORS read from R output
-    ///   - ADMISSION RESULT
-    pub fn trace_report(&self, result: &ExecutionResult) {
-        let rel   = self.rel.as_ref().expect("trace_report requires declared topology");
-        let field = self.field.as_ref().expect("trace_report requires declared field");
-        let (rho_base, chi_0, _) = self.rho.as_ref().expect("trace_report requires declared rho");
-        // Reproduce A to compute ρ (as in execute; ρ is derived from A magnitudes)
-        let a_for_rho = operator_a(field, rel, &self.pairs);
-        let rho = compute_rho(&a_for_rho, rel, *rho_base, *chi_0);
-
+    ///   CALCULATED  — quantities from declared topology and node field alone
+    ///   M-SUPPLIED  — ρ_base, χ₀ with their provenance label
+    ///   KERNEL OPEN — unresolved Kernel V8 mathematical conditions
+    ///   RESULT      — Complete (RelationalOutput / CalculatedZero) or Partial
+    pub fn trace_report(&self, output: &SessionOutput) {
         println!();
         println!("═══════════════════════════════════════════════════════");
         println!("  IRRS SESSION — EXECUTION TRACE");
         println!("═══════════════════════════════════════════════════════");
 
         // Topology
-        println!();
-        println!("  DECLARED TOPOLOGY  ({} nodes, {} edges)",
-            rel.n_nodes, rel.n_edges());
-        for e in 0..rel.n_edges() {
-            println!("    e{}: node {} → node {}  [{:?}]",
-                e, rel.src(e), rel.tgt(e), rel.provenance(e));
+        if let Some(rel) = &self.rel {
+            println!();
+            println!("  DECLARED TOPOLOGY  ({} nodes, {} edges)",
+                rel.n_nodes, rel.n_edges());
+            for e in 0..rel.n_edges() {
+                println!("    e{}: node {} → node {}  [{:?}]",
+                    e, rel.src(e), rel.tgt(e), rel.provenance(e));
+            }
+        } else {
+            println!();
+            println!("  DECLARED TOPOLOGY  [not declared]");
         }
 
         // Node field
-        println!();
-        println!("  DECLARED NODE FIELD  (component 0)");
-        for i in 0..field.n {
-            println!("    x[{}] = {}", i, field.data[0][i]);
-        }
-
-        // ρ values (calculated from declared field and M-supplied parameters)
-        println!();
-        println!("  CALCULATED ρ (from declared field + M-supplied ρ_base, χ₀)");
-        for i in 0..rel.n_nodes {
-            println!("    ρ[{}] = {:.6}", i, rho[i]);
-        }
-
-        // M-supplied parameters with provenance
-        let provenance_label = match result {
-            ExecutionResult::RelationalOutput { parameter_provenance, .. } => *parameter_provenance,
-            ExecutionResult::ObservedZero     { parameter_provenance, .. } => *parameter_provenance,
-        };
-        let provenance_str = match provenance_label {
-            ParameterProvenance::Illustrative             => "ILLUSTRATIVE",
-            ParameterProvenance::ObservationallyEstablished => "OBSERVATIONALLY ESTABLISHED",
-        };
-        println!();
-        println!("  M-SUPPLIED PARAMETERS  [{}]", provenance_str);
-        println!("    ρ_base = {}   (domain-specific ceiling; complexity-determined)", rho_base);
-        println!("    χ₀     = {}   (domain-specific saturation scale; complexity-determined)", chi_0);
-        if provenance_label == ParameterProvenance::Illustrative {
+        if let Some(field) = &self.field {
             println!();
-            println!("  NOTE: Illustrative parameters enable operator demonstration.");
-            println!("  To establish these observationally, M must independently observe");
-            println!("  R[e] for two or more edges, then solve:");
-            println!("    R[e] = B[e] + ρ[src(e)] · (Σ_succ B − Σ_pred B)");
-            println!("    ρ[i] = ρ_base · χ[i] / (χ₀ + χ[i])");
-            println!("  for ρ_base and χ₀ using declared topology and node field.");
+            let comp_label = if field.k == 1 { "1 component".to_string() }
+                             else { format!("{} components", field.k) };
+            println!("  DECLARED NODE FIELD  ({})", comp_label);
+            for c in 0..field.k {
+                for i in 0..field.n {
+                    println!("    x[c={},i={}] = {}", c, i, field.data[c][i]);
+                }
+            }
+        } else {
+            println!();
+            println!("  DECLARED NODE FIELD  [not declared]");
         }
 
-        // Execution results
+        // M-supplied parameters
         println!();
-        match result {
-            ExecutionResult::RelationalOutput { edge_field, detection_indicators, .. } => {
-                println!("  ADMISSION RESULT: ADMITTED → RELATIONAL OUTPUT");
+        if let Some((rho_base, chi_0, provenance)) = &self.rho {
+            println!("  M-SUPPLIED PARAMETERS  [{}]", provenance.label());
+            println!("    ρ_base = {}   (domain-specific ceiling; complexity-determined)", rho_base);
+            println!("    χ₀     = {}   (domain-specific saturation scale; complexity-determined)", chi_0);
+            if let ParameterProvenance::ObservationallyEstablished(ev) = provenance {
+                println!("    Evidence: {}", ev.description);
+                if let Some(r) = &ev.reference {
+                    println!("    Reference: {}", r);
+                }
+            } else {
                 println!();
-                println!("  E[e] (assembled edge field, component 0):");
-                for e in 0..rel.n_edges() {
-                    println!("    E[e{}] = {:.6}  𝟙[e{}] = {:.0}",
-                        e, edge_field.spatial[0][e], e, detection_indicators[e]);
+                println!("  NOTE: Illustrative parameters enable operator demonstration.");
+                println!("  To establish these observationally, M must independently observe");
+                println!("  R[e] for two or more edges, then solve:");
+                println!("    R[e] = B[e] + ρ[src(e)] · (Σ_succ B − Σ_pred B)");
+                println!("    ρ[i] = ρ_base · χ[i] / (χ₀ + χ[i])");
+                println!("  for ρ_base and χ₀ using declared topology and node field.");
+                println!("  Record the calibration as an EvidenceRecord before claiming");
+                println!("  ObservationallyEstablished provenance.");
+            }
+        } else {
+            println!("  M-SUPPLIED PARAMETERS  [not declared]");
+            println!("    ρ_base and χ₀ are domain-specific and must be declared.");
+        }
+
+        // Kernel OPEN conditions — always surfaced
+        println!();
+        println!("  KERNEL V8 OPEN CONDITIONS (unresolved mathematical questions):");
+        println!("    ① RhoMaxSelectionRule  — χ magnitude selection across components");
+        println!("      and incident edges unconfirmed (§11.2, §18).");
+        println!("    ② RhoSaturatingForm    — saturating form ρ=ρ_base·χ/(χ₀+χ) not");
+        println!("      derived from relational first principles (§11.2, §18).");
+
+        // Execution result
+        println!();
+        match output {
+            SessionOutput::Blocked(conditions) => {
+                println!("  RESULT: BLOCKED");
+                for c in conditions {
+                    println!("    ✗ {:?}", c);
                 }
             }
-            ExecutionResult::ObservedZero { edge_field, .. } => {
-                println!("  ADMISSION RESULT: ADMITTED → OBSERVED ZERO");
-                println!("  Antisymmetric circulation = 0 on all edges.");
-                println!("  This is an observable outcome (flat field or zero χ).");
-                println!("  Not a prerequisite failure. Not audit A-3.");
+
+            SessionOutput::Partial { a_field, b_field, open_r_conditions, .. } => {
+                let rel = self.rel.as_ref().unwrap();
+                println!("  RESULT: PARTIAL EXECUTION — A and B computed; R blocked");
                 println!();
-                println!("  E[e] (assembled edge field, component 0):");
-                for e in 0..rel.n_edges() {
-                    println!("    E[e{}] = {:.6}  𝟙[e{}] = 0", e, edge_field.spatial[0][e], e);
+                println!("  A[e] (edge differences, all components):");
+                for c in 0..a_field.k {
+                    for e in 0..rel.n_edges() {
+                        println!("    A[c={},e{}] = {:.6}", c, e, a_field.spatial[c][e]);
+                    }
+                }
+                println!();
+                println!("  B[e] (successor accumulation, all components):");
+                for c in 0..b_field.k {
+                    for e in 0..rel.n_edges() {
+                        println!("    B[c={},e{}] = {:.6}", c, e, b_field.spatial[c][e]);
+                    }
+                }
+                println!();
+                println!("  R OPEN conditions:");
+                for c in open_r_conditions {
+                    println!("    ✗ {:?}", c);
+                }
+            }
+
+            SessionOutput::Complete(result) => {
+                let rel = self.rel.as_ref().unwrap();
+                match result {
+                    ExecutionResult::RelationalOutput {
+                        edge_field, detection_indicators, parameter_provenance, ..
+                    } => {
+                        println!("  RESULT: ADMITTED → RELATIONAL OUTPUT [{}]",
+                            parameter_provenance.label());
+                        println!();
+                        println!("  R[e] = E[e] (assembled edge field, all components):");
+                        for c in 0..edge_field.k {
+                            for e in 0..rel.n_edges() {
+                                println!("    E[c={},e{}] = {:.6}  𝟙[e{}] = {:.0}",
+                                    c, e, edge_field.spatial[c][e], e, detection_indicators[e]);
+                            }
+                        }
+                        println!();
+                        println!("  Detection tolerance: {}", DETECTION_TOLERANCE);
+                        println!("  (Numerical precision threshold — not a physical detection limit.)");
+                    }
+                    ExecutionResult::CalculatedZero { edge_field, parameter_provenance, .. } => {
+                        println!("  RESULT: ADMITTED → CALCULATED ZERO [{}]",
+                            parameter_provenance.label());
+                        println!("  The kernel computed zero antisymmetric term on all edges.");
+                        println!("  This is a kernel output, not a physical observation.");
+                        println!("  Independent observational comparison is required to assert");
+                        println!("  that the physical observable is zero.");
+                        println!();
+                        println!("  R[e] = B[e] (no antisymmetric contribution, all components):");
+                        for c in 0..edge_field.k {
+                            for e in 0..rel.n_edges() {
+                                println!("    E[c={},e{}] = {:.6}  𝟙[e{}] = 0", c, e,
+                                    edge_field.spatial[c][e], e);
+                            }
+                        }
+                        println!();
+                        println!("  Detection tolerance: {}", DETECTION_TOLERANCE);
+                    }
                 }
             }
         }
+
         println!();
         println!("═══════════════════════════════════════════════════════");
     }
