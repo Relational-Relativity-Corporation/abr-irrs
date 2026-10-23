@@ -1,20 +1,21 @@
 /// IRRS Session — Admission and Regression Tests
 ///
 /// Covers:
-///   BLOCKED:  topology missing, no interior locus, field missing, ρ missing,
-///             dimension mismatch, invalid ρ parameter
-///   PARTIAL:  topology+field declared, ρ not declared → A and B exposed
-///   COMPLETE: illustrative ρ, correct R values, CalculatedZero (flat field),
-///             multi-component detection, kernel OPEN conditions present
-///   PROVENANCE: ObservationallyEstablished requires EvidenceRecord
+///   BLOCKED:    topology missing, no interior locus, field missing, ρ missing,
+///               dimension mismatch, invalid ρ parameter
+///   PARTIAL:    topology+field declared, ρ not declared → A and B exposed
+///   COMPLETE:   illustrative ρ, correct R values, CalculatedZero (flat field),
+///               multi-component detection, kernel OPEN conditions present
+///   PROVENANCE: three-state provenance (Illustrative / EvidenceDeclared /
+///               ObservationallyVerified); failed correspondence; open items
 
 use irrs_kernel::operators::{
     DeclaredRelations, EdgeProvenance, NodeField,
 };
 use irrs_session::admission::{
-    AdmissionResult, EvidenceRecord, ExecutionResult,
-    KernelOpenCondition, OpenCondition, ParameterProvenance,
-    SessionOutput, DETECTION_TOLERANCE,
+    AdmissionResult, DeclaredObservable, EvidenceRecord, ExecutionResult,
+    KernelOpenCondition, ObservationalComparison, OpenCondition,
+    ParameterProvenance, SessionOutput, VerificationRecord, DETECTION_TOLERANCE,
 };
 use irrs_session::session::Session;
 
@@ -369,20 +370,24 @@ fn test_multicomponent_detection_any_nonzero() {
     }
 }
 
-// ─── PROVENANCE: ObservationallyEstablished requires EvidenceRecord ───────────
+// ─── PROVENANCE: EvidenceDeclared carries record, is not verified ─────────────
 //
-// Verifier correction #2: enum alone is not verification; record required.
+// An EvidenceRecord alone produces EVIDENCE DECLARED — VERIFICATION OPEN.
+// It does not produce OBSERVATIONALLY VERIFIED.
 
 #[test]
-fn test_observational_provenance_carries_evidence() {
+fn test_evidence_declared_carries_record_not_verified() {
     let evidence = EvidenceRecord::new(
         "ρ_base=0.75 and χ₀=1.2 fitted to R[e0]=2.51, R[e1]=2.38 \
          from measurement run 2026-10-20."
     ).with_reference("run-2026-10-20.dat");
 
-    let prov = ParameterProvenance::ObservationallyEstablished(evidence);
-    assert!(prov.is_observational(), "should be observational");
-    assert!(!prov.is_illustrative(), "should not be illustrative");
+    let prov = ParameterProvenance::EvidenceDeclared(evidence);
+    assert!(prov.is_observational(),  "EvidenceDeclared is non-illustrative");
+    assert!(prov.is_evidence_declared(), "should be EvidenceDeclared variant");
+    assert!(!prov.is_verified(),  "EvidenceDeclared must not be verified");
+    assert!(!prov.is_illustrative());
+    assert_eq!(prov.label(), "EVIDENCE DECLARED — VERIFICATION OPEN");
 
     let mut session = Session::new();
     session.declare_topology(stu_topology());
@@ -392,8 +397,10 @@ fn test_observational_provenance_carries_evidence() {
 
     match session.admit() {
         AdmissionResult::Admitted { parameter_provenance, .. } => {
-            assert!(parameter_provenance.is_observational(),
-                "admitted session should carry ObservationallyEstablished provenance");
+            assert!(parameter_provenance.is_evidence_declared(),
+                "admitted provenance should be EvidenceDeclared");
+            assert!(!parameter_provenance.is_verified(),
+                "EvidenceRecord alone must not produce verified status");
         }
         AdmissionResult::Open(c) => panic!("expected Admitted, got Open({:?})", c),
     }
@@ -503,12 +510,12 @@ fn trace_execution_demo() {
     s.trace_report(&output);
     assert!(matches!(&output, SessionOutput::Complete(ExecutionResult::RelationalOutput { .. })));
 
-    // ── TRACE 4: Complete — ObservationallyEstablished ────────────────────
+    // ── TRACE 4: Complete — EvidenceDeclared ─────────────────────────────
     println!("\n╔═══════════════════════════════════════════════════════════╗");
-    println!("║  TRACE 4 — COMPLETE: observationally established           ║");
+    println!("║  TRACE 4 — COMPLETE: evidence declared, verification open  ║");
     println!("╚═══════════════════════════════════════════════════════════╝");
-    println!("  Verifier correction #2: EvidenceRecord required; enum");
-    println!("  variant alone is not verification.");
+    println!("  EvidenceRecord present; provenance = EVIDENCE DECLARED —");
+    println!("  VERIFICATION OPEN. EvidenceRecord alone is not verification.");
     let evidence = EvidenceRecord::new(
         "ρ_base=0.75 and χ₀=1.2 fitted to R[e0]=2.51, R[e1]=2.38 \
          from measurement run 2026-10-20 at node field x=[3.1, 5.2, 1.9]."
@@ -516,7 +523,7 @@ fn trace_execution_demo() {
     let mut s = Session::new();
     s.declare_topology(stu_topology());
     s.declare_field(NodeField::new(vec![vec![3.0, 5.0, 2.0]]));
-    s.declare_rho(0.75, 1.2, ParameterProvenance::ObservationallyEstablished(evidence));
+    s.declare_rho(0.75, 1.2, ParameterProvenance::EvidenceDeclared(evidence));
     s.declare_cc(vec![], vec![]);
     let output = s.execute();
     s.trace_report(&output);
@@ -555,4 +562,277 @@ fn test_detection_tolerance_constant_is_explicit() {
     let just_below = DETECTION_TOLERANCE * 0.999;
     assert!(just_above > DETECTION_TOLERANCE);
     assert!(just_below < DETECTION_TOLERANCE);
+}
+
+// ─── PROVENANCE: ObservationallyVerified requires inspectable comparison ──────
+//
+// Task #10 — Verifier requirement #4:
+// Verified status requires a VerificationRecord with declared observables,
+// parameter derivation, comparison results, and a verification source.
+// Synthetic fixture used; labeled as such in evidence description.
+
+fn synthetic_verification_record_passing() -> VerificationRecord {
+    // s→t→u, x=[3,5,2], ρ_base=0.8, χ₀=1.0
+    // Expected: E[e0]≈2.6, E[e1]≈2.4
+    VerificationRecord {
+        evidence: EvidenceRecord::new(
+            "Synthetic fixture — not physical experimental evidence. \
+             ρ_base=0.8, χ₀=1.0 chosen to match calculated E[e0]=2.6, E[e1]=2.4 \
+             at x=[3,5,2]."
+        ).with_reference("synthetic-fixture-Task10"),
+        declared_observables: vec![
+            DeclaredObservable {
+                label: "R[e0]".into(),
+                value: 2.6,
+                unit: None,
+                measurement_provenance: "Synthetic fixture value".into(),
+            },
+            DeclaredObservable {
+                label: "R[e1]".into(),
+                value: 2.4,
+                unit: None,
+                measurement_provenance: "Synthetic fixture value".into(),
+            },
+        ],
+        parameter_derivation:
+            "ρ_base=0.8 and χ₀=1.0 chosen to reproduce declared fixture values.".into(),
+        verification_source: "Task #10 synthetic fixture — internal consistency check".into(),
+        comparisons: vec![
+            ObservationalComparison {
+                label: "R[e0]".into(),
+                observed: 2.6,
+                calculated: 2.6,
+                tolerance: 1e-3,
+            },
+            ObservationalComparison {
+                label: "R[e1]".into(),
+                observed: 2.4,
+                calculated: 2.4,
+                tolerance: 1e-3,
+            },
+        ],
+        open_items: vec![],
+    }
+}
+
+#[test]
+fn test_verified_requires_inspectable_comparison() {
+    let rec = synthetic_verification_record_passing();
+
+    // All comparisons pass; no open items → is_fully_verified() must be true.
+    assert!(rec.is_fully_verified(),
+        "synthetic fixture comparisons should all pass");
+    assert!(rec.failed_comparisons().is_empty());
+
+    let prov = ParameterProvenance::ObservationallyVerified(rec);
+    assert!(prov.is_verified(), "should be verified");
+    assert!(!prov.is_evidence_declared());
+    assert!(!prov.is_illustrative());
+    assert_eq!(prov.label(), "OBSERVATIONALLY VERIFIED");
+
+    // Admitted and executed; math result unchanged.
+    let mut session = Session::new();
+    session.declare_topology(stu_topology());
+    session.declare_field(stu_field_345());
+    session.declare_rho(0.8, 1.0, prov);
+    session.declare_cc(vec![], vec![]);
+
+    match session.execute() {
+        SessionOutput::Complete(ExecutionResult::RelationalOutput {
+            edge_field, parameter_provenance, ..
+        }) => {
+            // Math result is kernel-calculated; not rewritten by provenance.
+            assert!((edge_field.spatial[0][0] - 2.6).abs() < 1e-6,
+                "E[e0] should be ~2.6; got {}", edge_field.spatial[0][0]);
+            assert!((edge_field.spatial[0][1] - 2.4).abs() < 1e-6,
+                "E[e1] should be ~2.4; got {}", edge_field.spatial[0][1]);
+            assert!(parameter_provenance.is_verified());
+        }
+        other => panic!("expected Complete(RelationalOutput), got {}",
+            match other {
+                SessionOutput::Complete(_) => "Complete(other)",
+                SessionOutput::Partial { .. } => "Partial",
+                SessionOutput::Blocked(_) => "Blocked",
+            }
+        ),
+    }
+}
+
+// ─── PROVENANCE: failed correspondence does not rewrite math ─────────────────
+//
+// Task #10 — Verifier requirement #5:
+// A VerificationRecord with failing comparisons labels the output
+// OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED.
+// The kernel-calculated result is NOT rewritten to match the declared observed value.
+
+#[test]
+fn test_failed_correspondence_does_not_rewrite_math() {
+    // s→t→u, x=[3,5,2], ρ_base=0.8, χ₀=1.0 → E[e0]≈2.6
+    // Declare observed=3.0 (does not match calculated 2.6) with tolerance=0.01.
+    let rec = VerificationRecord {
+        evidence: EvidenceRecord::new(
+            "Synthetic fixture — deliberate mismatch to test correspondence failure. \
+             Observed R[e0] declared as 3.0; kernel calculates 2.6."
+        ),
+        declared_observables: vec![
+            DeclaredObservable {
+                label: "R[e0]".into(),
+                value: 3.0,
+                unit: None,
+                measurement_provenance: "Synthetic fixture — deliberate mismatch".into(),
+            },
+        ],
+        parameter_derivation: "ρ_base=0.8, χ₀=1.0 (not matched to observed 3.0)".into(),
+        verification_source: "Task #10 mismatch fixture — internal".into(),
+        comparisons: vec![
+            ObservationalComparison {
+                label: "R[e0]".into(),
+                observed: 3.0,
+                calculated: 2.6,
+                tolerance: 0.01,  // |3.0 - 2.6| = 0.4 >> 0.01 → FAIL
+            },
+        ],
+        open_items: vec![],
+    };
+
+    // is_fully_verified() must be false; failed_comparisons() must be non-empty.
+    assert!(!rec.is_fully_verified(), "comparison must fail");
+    assert_eq!(rec.failed_comparisons().len(), 1);
+    assert!((rec.failed_comparisons()[0].residual() - (3.0 - 2.6)).abs() < 1e-9);
+
+    let prov = ParameterProvenance::ObservationallyVerified(rec);
+    // Label reflects failure without dropping the ObservationallyVerified state.
+    assert_eq!(prov.label(), "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED");
+    assert!(prov.is_verified(), "variant is still ObservationallyVerified");
+
+    let mut session = Session::new();
+    session.declare_topology(stu_topology());
+    session.declare_field(stu_field_345());
+    session.declare_rho(0.8, 1.0, prov);
+    session.declare_cc(vec![], vec![]);
+
+    match session.execute() {
+        SessionOutput::Complete(ExecutionResult::RelationalOutput {
+            edge_field, ..
+        }) => {
+            // Kernel result stands at ~2.6; NOT rewritten to the declared 3.0.
+            assert!((edge_field.spatial[0][0] - 2.6).abs() < 1e-6,
+                "math result must not be rewritten: expected ~2.6, got {}",
+                edge_field.spatial[0][0]);
+            assert!((edge_field.spatial[0][0] - 3.0).abs() > 0.3,
+                "result must differ from declared observed value 3.0");
+        }
+        other => panic!("expected Complete(RelationalOutput), got {}",
+            match other {
+                SessionOutput::Complete(_) => "Complete(other)",
+                SessionOutput::Partial { .. } => "Partial",
+                SessionOutput::Blocked(_) => "Blocked",
+            }
+        ),
+    }
+}
+
+// ─── PROVENANCE: open items in VerificationRecord are surfaced ────────────────
+//
+// open_items records unverified aspects. A record with open_items is not
+// fully verified even if all comparisons pass.
+
+#[test]
+fn test_verification_record_with_open_items_not_fully_verified() {
+    let rec = VerificationRecord {
+        evidence: EvidenceRecord::new(
+            "Synthetic fixture — open item present to test surfacing."
+        ),
+        declared_observables: vec![],
+        parameter_derivation: "illustrative derivation".into(),
+        verification_source: "Task #10 open-item fixture".into(),
+        comparisons: vec![
+            ObservationalComparison {
+                label: "R[e0]".into(),
+                observed: 2.6,
+                calculated: 2.6,
+                tolerance: 1e-3,
+            },
+        ],
+        open_items: vec![
+            "χ₀ derivation from first principles not completed (Kernel V8 §11.2 OPEN)".into(),
+        ],
+    };
+
+    // Comparisons pass, but open_items is non-empty → not fully verified.
+    assert!(rec.failed_comparisons().is_empty(), "comparison passes");
+    assert!(!rec.is_fully_verified(),
+        "open_items present → not fully verified even if comparisons pass");
+
+    let prov = ParameterProvenance::ObservationallyVerified(rec);
+    // Label reflects that verification is not complete.
+    assert_eq!(prov.label(), "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED",
+        "non-fully-verified ObservationallyVerified should carry CORRESPONDENCE FAILED label");
+}
+
+// ─── Provenance trace: three states ──────────────────────────────────────────
+//
+// Demonstrates ILLUSTRATIVE / EVIDENCE DECLARED — VERIFICATION OPEN /
+// OBSERVATIONALLY VERIFIED in sequence.
+// Run with: cargo test -p irrs-session -- trace_provenance_states --nocapture
+
+#[test]
+fn trace_provenance_states() {
+    // ── TRACE A: Illustrative ─────────────────────────────────────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE A — ILLUSTRATIVE provenance                        ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!("  Parameters declared to demonstrate operator mechanics.");
+    println!("  No observational correspondence is claimed or implied.");
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(stu_field_345());
+    s.declare_rho(0.8, 1.0, ParameterProvenance::Illustrative);
+    s.declare_cc(vec![], vec![]);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(&output, SessionOutput::Complete(ExecutionResult::RelationalOutput {
+        parameter_provenance, ..
+    }) if parameter_provenance.is_illustrative()));
+
+    // ── TRACE B: Evidence declared, verification open ─────────────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE B — EVIDENCE DECLARED — VERIFICATION OPEN          ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!("  EvidenceRecord present; not independently evaluated.");
+    println!("  EvidenceRecord alone does not constitute verification.");
+    let evidence = EvidenceRecord::new(
+        "ρ_base=0.75 and χ₀=1.2 fitted to R[e0]=2.51, R[e1]=2.38 \
+         from measurement run 2026-10-20 at node field x=[3.1, 5.2, 1.9]."
+    ).with_reference("run-2026-10-20.dat");
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(stu_field_345());
+    s.declare_rho(0.75, 1.2, ParameterProvenance::EvidenceDeclared(evidence));
+    s.declare_cc(vec![], vec![]);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(&output, SessionOutput::Complete(ExecutionResult::RelationalOutput {
+        parameter_provenance, ..
+    }) if parameter_provenance.is_evidence_declared()));
+
+    // ── TRACE C: Observationally verified — synthetic fixture ────────────
+    println!("\n╔═══════════════════════════════════════════════════════════╗");
+    println!("║  TRACE C — OBSERVATIONALLY VERIFIED (synthetic fixture)   ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!("  VerificationRecord with declared observables, derivation,");
+    println!("  comparison results, and verification source. Fixture labeled.");
+    let rec = synthetic_verification_record_passing();
+    let mut s = Session::new();
+    s.declare_topology(stu_topology());
+    s.declare_field(stu_field_345());
+    s.declare_rho(0.8, 1.0, ParameterProvenance::ObservationallyVerified(rec));
+    s.declare_cc(vec![], vec![]);
+    let output = s.execute();
+    s.trace_report(&output);
+    assert!(matches!(&output, SessionOutput::Complete(ExecutionResult::RelationalOutput {
+        parameter_provenance, ..
+    }) if parameter_provenance.is_verified()));
+
+    println!("\n  All three provenance-state traces completed.");
 }

@@ -30,6 +30,9 @@ use crate::admission::{
     OpenCondition, ParameterProvenance, SessionOutput,
     DETECTION_TOLERANCE,
 };
+// VerificationRecord and comparison types used only in trace_report.
+#[allow(unused_imports)]
+use crate::admission::VerificationRecord;
 
 // ─── Session ─────────────────────────────────────────────────────────────────
 
@@ -390,21 +393,82 @@ impl Session {
             println!("  M-SUPPLIED PARAMETERS  [{}]", provenance.label());
             println!("    ρ_base = {}   (domain-specific ceiling; complexity-determined)", rho_base);
             println!("    χ₀     = {}   (domain-specific saturation scale; complexity-determined)", chi_0);
-            if let ParameterProvenance::ObservationallyEstablished(ev) = provenance {
-                println!("    Evidence: {}", ev.description);
-                if let Some(r) = &ev.reference {
-                    println!("    Reference: {}", r);
+            match provenance {
+                ParameterProvenance::Illustrative => {
+                    println!();
+                    println!("  NOTE: Illustrative parameters enable operator demonstration.");
+                    println!("  No observational correspondence is claimed.");
+                    println!("  To reach EVIDENCE DECLARED status, supply an EvidenceRecord.");
+                    println!("  To reach OBSERVATIONALLY VERIFIED status, supply a VerificationRecord");
+                    println!("  with declared observables, parameter derivation, comparison results,");
+                    println!("  and verification source.");
                 }
-            } else {
-                println!();
-                println!("  NOTE: Illustrative parameters enable operator demonstration.");
-                println!("  To establish these observationally, M must independently observe");
-                println!("  R[e] for two or more edges, then solve:");
-                println!("    R[e] = B[e] + ρ[src(e)] · (Σ_succ B − Σ_pred B)");
-                println!("    ρ[i] = ρ_base · χ[i] / (χ₀ + χ[i])");
-                println!("  for ρ_base and χ₀ using declared topology and node field.");
-                println!("  Record the calibration as an EvidenceRecord before claiming");
-                println!("  ObservationallyEstablished provenance.");
+                ParameterProvenance::EvidenceDeclared(ev) => {
+                    println!();
+                    println!("  EVIDENCE RECORD:");
+                    println!("    {}", ev.description);
+                    if let Some(r) = &ev.reference {
+                        println!("    Reference: {}", r);
+                    }
+                    println!();
+                    println!("  VERIFICATION STATUS: OPEN");
+                    println!("  The evidence record declares the basis for these parameters.");
+                    println!("  It has not been independently evaluated. To reach OBSERVATIONALLY");
+                    println!("  VERIFIED, supply a VerificationRecord with declared observables,");
+                    println!("  parameter derivation, comparison results, and verification source.");
+                }
+                ParameterProvenance::ObservationallyVerified(rec) => {
+                    println!();
+                    println!("  EVIDENCE RECORD:");
+                    println!("    {}", rec.evidence.description);
+                    if let Some(r) = &rec.evidence.reference {
+                        println!("    Reference: {}", r);
+                    }
+                    println!();
+                    println!("  PARAMETER DERIVATION:");
+                    println!("    {}", rec.parameter_derivation);
+                    println!();
+                    println!("  VERIFICATION SOURCE: {}", rec.verification_source);
+                    if !rec.declared_observables.is_empty() {
+                        println!();
+                        println!("  DECLARED OBSERVABLES:");
+                        for obs in &rec.declared_observables {
+                            let unit = obs.unit.as_deref().unwrap_or("dimensionless");
+                            println!("    {} = {}  [{}]  ({})",
+                                obs.label, obs.value, unit, obs.measurement_provenance);
+                        }
+                    }
+                    if !rec.comparisons.is_empty() {
+                        println!();
+                        println!("  OBSERVATIONAL COMPARISONS:");
+                        for cmp in &rec.comparisons {
+                            let status = if cmp.passes() { "PASS" } else { "FAIL" };
+                            println!("    {}  observed={:.6}  calculated={:.6}  \
+                                     residual={:+.6}  tol={:.2e}  [{}]",
+                                cmp.label, cmp.observed, cmp.calculated,
+                                cmp.residual(), cmp.tolerance, status);
+                        }
+                        let failed = rec.failed_comparisons();
+                        if !failed.is_empty() {
+                            println!();
+                            println!("  ⚠ FAILED COMPARISONS: {}", failed.len());
+                            println!("  The kernel-calculated result stands as computed.");
+                            println!("  Declared observables and calculated values disagree");
+                            println!("  beyond declared tolerance. The mathematical result has");
+                            println!("  not been rewritten to match the declared observable.");
+                        }
+                    } else {
+                        println!();
+                        println!("  COMPARISONS: none recorded — correspondence OPEN");
+                    }
+                    if !rec.open_items.is_empty() {
+                        println!();
+                        println!("  OPEN VERIFICATION ITEMS:");
+                        for item in &rec.open_items {
+                            println!("    ✗ {}", item);
+                        }
+                    }
+                }
             }
         } else {
             println!("  M-SUPPLIED PARAMETERS  [not declared]");

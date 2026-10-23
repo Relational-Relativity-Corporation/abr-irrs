@@ -10,9 +10,14 @@
 ///   PARTIAL                      — A and B computed; R prerequisites unmet
 ///   BLOCKED                      — prerequisites missing before A can execute
 ///
-/// Key distinction: "CalculatedZero" names what the kernel produced. It does
-/// not assert that a physical observable is zero. That claim requires an
-/// independent observational comparison not supplied by this layer.
+/// Three provenance states (distinct; not interchangeable):
+///   ILLUSTRATIVE                       — mathematical demonstration; no observational claim
+///   EVIDENCE DECLARED — VERIFICATION OPEN — evidence exists; not yet independently evaluated
+///   OBSERVATIONALLY VERIFIED           — inspected, derived, compared; all three documented
+///
+/// "CalculatedZero" names what the kernel produced. It does not assert
+/// that a physical observable is zero. That claim requires an independent
+/// observational comparison not supplied by this layer.
 
 use irrs_kernel::operators::EdgeField;
 
@@ -32,14 +37,19 @@ pub const DETECTION_TOLERANCE: f64 = 1e-12;
 
 // ─── EvidenceRecord ──────────────────────────────────────────────────────────
 
-/// Record supporting a claim of observationally established parameter provenance.
+/// Record supporting a declaration of non-illustrative parameter provenance.
 ///
-/// Required when declaring `ParameterProvenance::ObservationallyEstablished`.
-/// The session layer cannot verify the evidence; it requires the record to exist
-/// and be non-empty so that Origins cannot silently claim observational status.
+/// Required when declaring `ParameterProvenance::EvidenceDeclared` or as the
+/// underlying record of `ParameterProvenance::ObservationallyVerified`.
 ///
-/// Minimum: a human-readable description of how the parameter was calibrated.
-/// Preferred: a reference to the measurement record, data file, or derivation.
+/// The session layer cannot verify the evidence; it requires the record to
+/// exist and be non-empty so that origins cannot silently claim non-illustrative
+/// status. Existence of this record produces EVIDENCE DECLARED — VERIFICATION
+/// OPEN; it does not produce OBSERVATIONALLY VERIFIED.
+///
+/// To reach OBSERVATIONALLY VERIFIED, supply a `VerificationRecord` that
+/// carries declared observables, parameter derivation, comparison results,
+/// and verification source. See `VerificationRecord`.
 #[derive(Debug, Clone)]
 pub struct EvidenceRecord {
     /// Description of the calibration or derivation procedure.
@@ -63,64 +73,217 @@ impl EvidenceRecord {
     }
 }
 
+// ─── DeclaredObservable ──────────────────────────────────────────────────────
+
+/// A declared observable quantity used in parameter verification.
+///
+/// Carries the quantity's label, numerical value, unit, and the basis on
+/// which it was declared. Required in a `VerificationRecord` to make the
+/// observation-to-calculation correspondence inspectable.
+#[derive(Debug, Clone)]
+pub struct DeclaredObservable {
+    /// Label identifying the quantity (e.g. "R[e0]", "E[e0,c=0]").
+    pub label: String,
+    /// Numerical value of the declared observable.
+    pub value: f64,
+    /// Physical unit, if applicable (e.g. "m/s", "dimensionless").
+    /// None when dimensionless or unit not applicable.
+    pub unit: Option<String>,
+    /// How this quantity was measured or derived.
+    pub measurement_provenance: String,
+}
+
+// ─── ObservationalComparison ─────────────────────────────────────────────────
+
+/// A comparison between a declared observable and a kernel-calculated result.
+///
+/// Declares the tolerance as a domain-supplied value distinct from
+/// `DETECTION_TOLERANCE`. Physical measurement tolerances are set by the
+/// domain; numerical precision tolerances are set by the session layer.
+/// These must not be conflated.
+#[derive(Debug, Clone)]
+pub struct ObservationalComparison {
+    /// Label identifying the compared quantity (e.g. "R[e0]").
+    pub label: String,
+    /// The independently declared observed value.
+    pub observed: f64,
+    /// The kernel-calculated value for the same quantity.
+    pub calculated: f64,
+    /// Domain-declared tolerance for this comparison.
+    /// Not `DETECTION_TOLERANCE`; set by the domain for its measurement precision.
+    pub tolerance: f64,
+}
+
+impl ObservationalComparison {
+    /// Returns true iff |observed − calculated| ≤ tolerance.
+    pub fn passes(&self) -> bool {
+        (self.observed - self.calculated).abs() <= self.tolerance
+    }
+
+    /// Signed residual: observed − calculated.
+    pub fn residual(&self) -> f64 {
+        self.observed - self.calculated
+    }
+}
+
+// ─── VerificationRecord ──────────────────────────────────────────────────────
+
+/// Record supporting a claim of observational verification.
+///
+/// Required for `ParameterProvenance::ObservationallyVerified`.
+/// Must carry enough information for independent inspection of the
+/// observation-to-calculation correspondence.
+///
+/// An `ObservationallyVerified` declaration that carries failing comparisons
+/// or open items does not block operator execution — the mathematical result
+/// stands as calculated. The trace report surfaces failures explicitly so
+/// the discrepancy is visible without rewriting the kernel output.
+///
+/// Use `open_items` to record what could not be verified rather than
+/// silently omitting it or fabricating entries.
+///
+/// # Note on synthetic fixtures
+///
+/// When writing tests or demonstrations, clearly label the record as a
+/// synthetic fixture ("Synthetic fixture — not physical experimental evidence")
+/// in the evidence description. Do not represent synthetic data as physical
+/// measurement evidence.
+#[derive(Debug, Clone)]
+pub struct VerificationRecord {
+    /// The underlying evidence record.
+    pub evidence: EvidenceRecord,
+    /// Declared observables used in parameter derivation.
+    /// Each entry identifies the quantity, value, unit, and measurement basis.
+    pub declared_observables: Vec<DeclaredObservable>,
+    /// Description of how ρ_base and χ₀ were derived from declared_observables.
+    pub parameter_derivation: String,
+    /// Source of independent evaluation.
+    /// Identifies who or what inspected the evidence and derivation.
+    pub verification_source: String,
+    /// Comparisons between declared observables and kernel-calculated results.
+    /// An empty list means no comparisons have been recorded: OPEN.
+    pub comparisons: Vec<ObservationalComparison>,
+    /// Items that remain OPEN in this verification record.
+    /// Use to record what could not be verified rather than silently omitting it.
+    pub open_items: Vec<String>,
+}
+
+impl VerificationRecord {
+    /// Returns true iff all comparisons pass and there are no open items.
+    ///
+    /// Note: this reflects the record's declared content, not an external
+    /// evaluation. A record that claims to pass is only as reliable as
+    /// the evidence and comparisons it contains.
+    pub fn is_fully_verified(&self) -> bool {
+        !self.comparisons.is_empty()
+            && self.comparisons.iter().all(|c| c.passes())
+            && self.open_items.is_empty()
+    }
+
+    /// Returns comparisons that failed (|observed − calculated| > tolerance).
+    pub fn failed_comparisons(&self) -> Vec<&ObservationalComparison> {
+        self.comparisons.iter().filter(|c| !c.passes()).collect()
+    }
+}
+
 // ─── ParameterProvenance ─────────────────────────────────────────────────────
 
 /// Provenance of declared domain-specific parameters (ρ_base, χ₀, cc).
 ///
-/// These parameters are domain-specific because complexity of the declared
-/// domain determines the characteristic scales. They cannot be universally
-/// assigned.
+/// Three distinct states. They are not interchangeable and must not be
+/// conflated:
 ///
-/// `ObservationallyEstablished` requires an `EvidenceRecord`. The provenance
-/// enum alone is not verification; the record makes the basis of the claim
-/// explicit and traceable.
+/// `Illustrative` — values chosen to demonstrate operator mechanics.
+///   No observational correspondence is claimed or implied.
+///   Explicitly labeled in all trace output.
 ///
-/// See `irrs-kernel` documentation: "Domain-specificity principle."
+/// `EvidenceDeclared` — an `EvidenceRecord` has been supplied, but the
+///   underlying evidence has not yet been independently evaluated.
+///   Status: EVIDENCE DECLARED — VERIFICATION OPEN.
+///   The record's existence does not constitute verification.
+///
+/// `ObservationallyVerified` — a `VerificationRecord` has been supplied
+///   carrying declared observables, parameter derivation, comparison results,
+///   and verification source. Status: OBSERVATIONALLY VERIFIED.
+///   Failed comparisons or open items in the record are surfaced in trace
+///   output; they do not block mathematical execution.
+///
+/// Separately from these three states, ρ_base, χ₀, and cc are domain-specific
+/// parameters: complexity of the declared domain determines applicable values.
+/// This is a structural principle; it is independent of provenance state.
 #[derive(Debug, Clone)]
 pub enum ParameterProvenance {
-    /// Values declared from calibration against independently observable R
-    /// output. The kernel was run over a declared observation; parameter values
-    /// were adjusted until R output matched the observable. An `EvidenceRecord`
-    /// describing the calibration is required.
-    ObservationallyEstablished(EvidenceRecord),
-
     /// Values declared to enable illustration of the operator mechanics.
     /// Not derived from R-output calibration over a declared observation.
-    /// The DECLARATION REPORT labels these clearly.
-    ///
-    /// An illustrative value does not falsify the operator; it faithfully
-    /// reports that the parameter is not yet observationally constrained.
+    /// Labels as ILLUSTRATIVE in all trace output.
     Illustrative,
+
+    /// Values accompanied by an evidence record, but not yet independently
+    /// evaluated. The record's existence records the declaration; it does
+    /// not constitute verification.
+    ///
+    /// Labels as EVIDENCE DECLARED — VERIFICATION OPEN.
+    EvidenceDeclared(EvidenceRecord),
+
+    /// Values independently verified against declared observable quantities.
+    /// The VerificationRecord must carry declared observables, parameter
+    /// derivation, comparison results, and verification source.
+    ///
+    /// Failed comparisons or open items in the record are surfaced in trace
+    /// output but do not alter the kernel-calculated result.
+    ///
+    /// Labels as OBSERVATIONALLY VERIFIED (or OBSERVATIONALLY VERIFIED —
+    /// CORRESPONDENCE FAILED if comparisons fail).
+    ObservationallyVerified(VerificationRecord),
 }
 
 impl ParameterProvenance {
     /// Returns true iff this is the Illustrative variant.
     pub fn is_illustrative(&self) -> bool {
-        matches!(self, ParameterProvenance::Illustrative)
+        matches!(self, Self::Illustrative)
     }
 
-    /// Returns true iff this is the ObservationallyEstablished variant.
+    /// Returns true iff this is the EvidenceDeclared variant.
+    pub fn is_evidence_declared(&self) -> bool {
+        matches!(self, Self::EvidenceDeclared(_))
+    }
+
+    /// Returns true iff this is the ObservationallyVerified variant.
+    pub fn is_verified(&self) -> bool {
+        matches!(self, Self::ObservationallyVerified(_))
+    }
+
+    /// Returns true iff this is any non-Illustrative variant.
     pub fn is_observational(&self) -> bool {
-        matches!(self, ParameterProvenance::ObservationallyEstablished(_))
+        !self.is_illustrative()
     }
 
-    /// Display label for trace reports.
+    /// Primary provenance label for trace output.
     pub fn label(&self) -> &'static str {
         match self {
-            ParameterProvenance::Illustrative => "ILLUSTRATIVE",
-            ParameterProvenance::ObservationallyEstablished(_) => "OBSERVATIONALLY ESTABLISHED",
+            Self::Illustrative => "ILLUSTRATIVE",
+            Self::EvidenceDeclared(_) => "EVIDENCE DECLARED — VERIFICATION OPEN",
+            Self::ObservationallyVerified(rec) => {
+                if rec.is_fully_verified() {
+                    "OBSERVATIONALLY VERIFIED"
+                } else {
+                    "OBSERVATIONALLY VERIFIED — CORRESPONDENCE FAILED"
+                }
+            }
         }
     }
 }
 
 impl PartialEq for ParameterProvenance {
     /// Two provenances are equal iff they are the same variant.
-    /// Evidence content is not compared; it is for traceability, not identity.
+    /// Evidence and verification content are not compared; they are for
+    /// traceability, not identity.
     fn eq(&self, other: &Self) -> bool {
         matches!(
             (self, other),
             (Self::Illustrative, Self::Illustrative)
-            | (Self::ObservationallyEstablished(_), Self::ObservationallyEstablished(_))
+            | (Self::EvidenceDeclared(_), Self::EvidenceDeclared(_))
+            | (Self::ObservationallyVerified(_), Self::ObservationallyVerified(_))
         )
     }
 }
@@ -158,85 +321,37 @@ pub enum KernelOpenCondition {
 // ─── OpenCondition ───────────────────────────────────────────────────────────
 
 /// An unresolved admission prerequisite or a pre-execution validation failure.
-///
-/// When `AdmissionResult::Open` or `SessionOutput::Blocked` is returned,
-/// each condition names one thing that prevents execution. These are not
-/// errors — they are the honest report of what declaration is missing or
-/// what parameter value is inadmissible.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenCondition {
-    /// The relational structure (topology) has not been declared.
-    /// Without topology, no interior locus can be established.
     TopologyNotDeclared,
-
-    /// Topology was declared but contains no interior locus.
-    /// An interior locus requires a node t such that at least one edge
-    /// terminates at t and at least one edge originates from t
-    /// (independently declared: not the same edge in both roles).
     NoInteriorLocus,
-
-    /// The node field (numerical projection through M) has not been declared.
     NodeFieldNotDeclared,
-
-    /// Domain-specific parameters ρ_base and χ₀ have not been declared.
-    /// These cannot be defaulted. The domain must establish them through M.
     RhoNotDeclared,
-
-    /// The node field's node count does not match the declared topology.
-    /// A cannot be evaluated: each edge references a source and target node
-    /// by index, which must exist in the field.
     DimensionMismatch {
         field_nodes:    usize,
         topology_nodes: usize,
     },
-
-    /// A declared ρ parameter value is inadmissible.
-    /// χ₀ must be strictly positive (it appears as a denominator).
-    /// ρ_base must be non-negative (it is a dimensionless ceiling).
     InvalidRhoParameter(String),
 }
 
 // ─── AdmissionResult ─────────────────────────────────────────────────────────
 
-/// The outcome of the full-operator admissibility check (admit()).
-///
-/// `Admitted` confirms that all session prerequisites are met and A→B→R may
-/// execute. It also carries `kernel_open` — the Kernel V8 mathematical
-/// questions that remain unresolved regardless of session declarations.
 pub enum AdmissionResult {
-    /// All session prerequisites met. A→B→R may execute.
     Admitted {
-        /// Provenance of ρ_base and χ₀ as declared by this session's M.
         parameter_provenance: ParameterProvenance,
-        /// Unresolved mathematical conditions within Kernel V8.
-        /// These are present whenever R is evaluated; they do not block
-        /// execution but must be visible to the caller.
-        kernel_open: Vec<KernelOpenCondition>,
+        kernel_open:          Vec<KernelOpenCondition>,
     },
-
-    /// Prerequisites not met. Lists every unresolved condition.
-    /// Callers should address each listed condition and re-admit.
     Open(Vec<OpenCondition>),
 }
 
 // ─── ExecutionResult ─────────────────────────────────────────────────────────
 
-/// The outcome of a complete A→B→R execution (within SessionOutput::Complete).
-///
 /// Note: `EdgeField` does not implement `Debug`; this enum is not `Debug`.
 pub enum ExecutionResult {
-    /// R operator executed; antisymmetric term ≠ 0 on at least one edge
-    /// for at least one declared component.
-    /// Detection indicators 𝟙[e] are read from R output, not parameter-set.
     RelationalOutput {
-        /// The R-operator output (= E field) for all spatial edges.
         edge_field:           EdgeField,
-        /// Provenance of ρ_base and χ₀ used in this execution.
         parameter_provenance: ParameterProvenance,
-        /// 𝟙[e] — 1.0 if |R[c][e] − B[c][e]| > DETECTION_TOLERANCE for any c.
-        /// One value per spatial edge. Read from R output; not a parameter.
         detection_indicators: Vec<f64>,
-        /// Unresolved mathematical conditions from Kernel V8 that affected R.
         kernel_open:          Vec<KernelOpenCondition>,
     },
 
@@ -244,57 +359,24 @@ pub enum ExecutionResult {
     /// edge for every declared component.
     ///
     /// "CalculatedZero" names what the kernel computed — not what a physical
-    /// observable is. Physical confirmation that the relevant quantity is zero
-    /// requires an independent observational comparison outside this layer.
-    ///
-    /// CalculatedZero ≠ audit A-3 (Kernel V8 OPEN): audit A-3 concerns
-    /// detection events with undeclared topology. This variant is the
-    /// correctly executed R operator returning numerical zero.
+    /// observable is. Physical confirmation requires an independent
+    /// observational comparison outside this layer.
     CalculatedZero {
-        /// The R-operator output (= B in this case; no antisymmetric term).
         edge_field:           EdgeField,
-        /// Provenance of ρ_base and χ₀ used in this execution.
         parameter_provenance: ParameterProvenance,
-        /// Unresolved mathematical conditions from Kernel V8.
         kernel_open:          Vec<KernelOpenCondition>,
     },
 }
 
 // ─── SessionOutput ───────────────────────────────────────────────────────────
 
-/// The full output of Session::execute().
-///
-/// Three states:
-///   Complete — all prerequisites met; A→B→R executed; result is RelationalOutput
-///              or CalculatedZero.
-///   Partial  — topology and field declared; R prerequisites unmet; A and B
-///              computed and preserved; open R conditions listed.
-///   Blocked  — prerequisites missing before A can execute, or a validation
-///              failure was detected; nothing computed.
-///
-/// Partial execution exposes A and B even when R cannot run. This preserves
-/// the calculable structural information (edge differences, successor
-/// accumulations) for inspection without fabricating R values.
 pub enum SessionOutput {
-    /// Full A→B→R execution completed.
     Complete(ExecutionResult),
-
-    /// A and B computed; R could not execute.
-    ///
-    /// Returned when topology and field are declared and an interior locus
-    /// exists, but R-specific prerequisites (ρ) are unmet.
-    /// A and B are provided for inspection; R is not fabricated.
     Partial {
-        /// A operator output: edge differences from declared field and topology.
-        a_field:            EdgeField,
-        /// B operator output: successor accumulation over A.
-        b_field:            EdgeField,
-        /// The R admission prerequisites that remain unresolved.
-        open_r_conditions:  Vec<OpenCondition>,
-        /// Unresolved Kernel V8 mathematical conditions (present regardless).
-        kernel_open:        Vec<KernelOpenCondition>,
+        a_field:           EdgeField,
+        b_field:           EdgeField,
+        open_r_conditions: Vec<OpenCondition>,
+        kernel_open:       Vec<KernelOpenCondition>,
     },
-
-    /// Cannot begin computation. Missing declarations or validation failure.
     Blocked(Vec<OpenCondition>),
 }
