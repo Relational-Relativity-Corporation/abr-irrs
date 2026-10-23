@@ -1,0 +1,8 @@
+[package]
+name = "irrs-session"
+version = "0.1.0"
+edition = "2021"
+description = "IRRS interactive session: D/M declaration, kernel admission, and execution trace"
+
+[dependencies]
+irrs-kernel = { path = "../irrs-kernel" }

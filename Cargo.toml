@@ -3,6 +3,7 @@ members = [
     "relational-gate",
     "irrs-kernel",
     "irrs-eval",
+    "irrs-session",
     "examples/abr-simple",
 ]
 resolver = "2"

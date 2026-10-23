@@ -219,12 +219,83 @@ fn main() {
     println!("  Comparison with observables: not declared in this example.");
     println!("  Return to Origin for observable comparison declaration.");
     println!();
-    println!("── OPEN CONDITIONS ─────────────────────────────────────────────────");
+    println!("── OPEN CONDITIONS (KERNEL V8) ─────────────────────────────────────");
     println!("  ρ max-selection rule: OPEN (Origin declaration required)");
     println!("  ρ saturating form: OPEN (Origin declaration required)");
     println!("  No persistence evaluation (first declared observation only).");
     println!("  To evaluate persistence: call PersistenceState::from_prior(E)");
     println!("  at the next declared observation, then operator_e_v5.");
+    println!();
+
+    // ── DECLARATION REPORT ──────────────────────────────────────────────────
+    //
+    // Identifies which quantities are calculated from declared observables
+    // and which are supplied through M. Required for any application that
+    // will present results as more than illustrative.
+
+    // Raw antisymmetric circulation factor at each edge (before ρ scaling).
+    // circ[e] = Σ_{succ(e)} B[f] − Σ_{pred(e)} B[f]
+    // This is fully calculable from declared topology and node field.
+    let circ_e0: f64 = rel.adj_plus[0].iter().map(|&f| b.spatial[0][f]).sum::<f64>()
+                     - rel.adj_minus[0].iter().map(|&f| b.spatial[0][f]).sum::<f64>();
+    let circ_e1: f64 = rel.adj_plus[1].iter().map(|&f| b.spatial[0][f]).sum::<f64>()
+                     - rel.adj_minus[1].iter().map(|&f| b.spatial[0][f]).sum::<f64>();
+
+    // Detection indicators (𝟙[e] = 1 iff R antisymmetric term ≠ 0)
+    let antis_e0 = r.spatial[0][0] - b.spatial[0][0];  // = ρ[e0] · circ_e0
+    let antis_e1 = r.spatial[0][1] - b.spatial[0][1];  // = ρ[e1] · circ_e1
+    let tol = 1e-12_f64;
+    let ind_e0 = if antis_e0.abs() > tol { 1.0 } else { 0.0 };
+    let ind_e1 = if antis_e1.abs() > tol { 1.0 } else { 0.0 };
+
+    println!("── DECLARATION REPORT ──────────────────────────────────────────────");
+    println!("  CALCULATED FROM DECLARED TOPOLOGY AND FIELD x:");
+    println!("    A[e0] = {:.4}   directed difference (no M parameters required)",
+        a.spatial[0][0]);
+    println!("    A[e1] = {:.4}   directed difference (no M parameters required)",
+        a.spatial[0][1]);
+    println!("    χ[s]  = {:.4}   max |A| incident to s  (max-selection rule: OPEN)",
+        a.spatial[0][0].abs());
+    println!("    χ[t]  = {:.4}   max |A| incident to t  (max-selection rule: OPEN)",
+        a.spatial[0][0].abs().max(a.spatial[0][1].abs()));
+    println!("    B[e0] = {:.4}   successor accumulation", b.spatial[0][0]);
+    println!("    B[e1] = {:.4}   successor accumulation", b.spatial[0][1]);
+    println!("    circ[e0] = {:.4}   Σ_succ B − Σ_pred B  (calculable; no ρ required)",
+        circ_e0);
+    println!("    circ[e1] = {:.4}   Σ_succ B − Σ_pred B  (calculable; no ρ required)",
+        circ_e1);
+    println!("    𝟙[e0] = {:.0}   detection indicator (R antisymmetric term nonzero?)",
+        ind_e0);
+    println!("    𝟙[e1] = {:.0}   detection indicator (R antisymmetric term nonzero?)",
+        ind_e1);
+    println!();
+    println!("  SUPPLIED THROUGH M:");
+    println!("    x[0] = [3.0, 5.0, 2.0]  (node field values from observable evidence)");
+    println!("    ρ_base = {rho_base}  *** ILLUSTRATIVE — not from R-output calibration ***");
+    println!("    χ₀     = {chi_0}  *** ILLUSTRATIVE — not from R-output calibration ***");
+    println!();
+    println!("  DOMAIN-SPECIFICITY:");
+    println!("    ρ_base and χ₀ are not universal constants. Their values are");
+    println!("    determined by the complexity and characteristic scales of the");
+    println!("    declared domain. These illustrative values are placeholders.");
+    println!("    A physical domain must establish its own values through M.");
+    println!();
+    println!("  TO ESTABLISH ρ_base AND χ₀ OBSERVATIONALLY:");
+    println!("    Require at least two declared observations of this relational");
+    println!("    topology at different field states, with independent measurement");
+    println!("    of R[e] at each. Two equations with unknowns ρ_base and χ₀:");
+    println!("      R_obs₁ = B₁[e] + ρ_base·χ₁/(χ₀+χ₁)·circ₁[e]");
+    println!("      R_obs₂ = B₂[e] + ρ_base·χ₂/(χ₀+χ₂)·circ₂[e]");
+    println!("    Solvable when χ₁ ≠ χ₂ and circulation factors are nonzero.");
+    println!("    Current example: no independent R-output observation declared.");
+    println!();
+    println!("  ADMISSION RESULT FOR THIS EXAMPLE:");
+    println!("    ADMITTED (with ILLUSTRATIVE parameters)");
+    println!("    Interior locus PRESENT: t (node 1) — target(e0) = source(e1)");
+    println!("    Circulation factors: circ[e0]={:.4}, circ[e1]={:.4} (both nonzero)",
+        circ_e0, circ_e1);
+    println!("    Parameter provenance: ILLUSTRATIVE");
+    println!("    Results above must not be cited as observationally grounded.");
     println!();
     println!("═══════════════════════════════════════════════════════════════════");
     println!("  Operators hold no agency. Responsibility stays with Origin.");
