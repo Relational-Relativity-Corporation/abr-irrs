@@ -183,7 +183,8 @@ class EvidencePackage:
 def _capture_environment(repo_root: Path) -> ExecutionEnvironment:
     try:
         cargo_v = subprocess.check_output(
-            ["cargo", "--version"], cwd=repo_root, text=True
+            ["cargo", "--version"], cwd=repo_root, text=True,
+            encoding="utf-8", errors="replace",
         ).strip()
     except Exception:
         cargo_v = "unavailable"
@@ -198,14 +199,16 @@ def _capture_environment(repo_root: Path) -> ExecutionEnvironment:
 def pin_commit(repo_root: Path, authorized_commit: str) -> CommitProvenanceRecord:
     try:
         actual = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True
+            ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True,
+            encoding="utf-8", errors="replace",
         ).strip()
     except subprocess.CalledProcessError as exc:
         actual = f"ERROR: {exc}"
 
     try:
         status_out = subprocess.check_output(
-            ["git", "status", "--short"], cwd=repo_root, text=True
+            ["git", "status", "--short"], cwd=repo_root, text=True,
+            encoding="utf-8", errors="replace",
         ).strip()
         # Block on modifications/deletions of tracked files (affect cargo compilation).
         # Untracked new files ("??") do not change what cargo compiles.
@@ -251,15 +254,17 @@ def run_rust_tests(repo_root: Path) -> ExecutionRecord:
     try:
         result = subprocess.run(
             cmd, cwd=repo_root, capture_output=True, text=True, timeout=RUNNER_TIMEOUT_S,
+            encoding="utf-8", errors="replace",
         )
         exit_code = result.returncode
-        stdout    = result.stdout
-        stderr    = result.stderr
+        stdout    = result.stdout or ""
+        stderr    = result.stderr or ""
     except subprocess.TimeoutExpired as exc:
         timed_out = True
         exit_code = -1
-        stdout    = exc.stdout or ""
-        stderr    = (exc.stderr or "") + f"\n[ORCHESTRATOR] Timed out after {RUNNER_TIMEOUT_S}s"
+        stdout    = (exc.stdout or b"").decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr    = (exc.stderr or b"").decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        stderr   += f"\n[ORCHESTRATOR] Timed out after {RUNNER_TIMEOUT_S}s"
     except FileNotFoundError:
         exit_code = -2
         stdout    = ""
