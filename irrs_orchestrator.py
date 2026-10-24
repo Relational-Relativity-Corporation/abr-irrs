@@ -390,11 +390,18 @@ def _parse_test_block(stdout: str, letter: str) -> TestResult:
         elif upper.startswith("BLOCKED:") or "TOPOLOGYNOTDECLARED" in upper or "FIELDNOTDECLARED" in upper:
             blocked_conditions.append(line.strip())
 
-    # Extract calculated numerical values (A, B, R) from the block if present
+    # Extract calculated numerical values (A, B, R) from the block.
+    # Pattern requires a leading digit so bare letters (e.g. "E[e]") are not matched.
     calc_values: dict = {}
-    for m in re.finditer(r"([ABR])\[([^\]]+)\]\s*=\s*([0-9.\-+eE]+)", block):
+    for m in re.finditer(
+        r"([ABR])\[(c=\d+,e\d+|e\d+)\]\s*=\s*([+-]?[0-9][0-9]*(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)",
+        block,
+    ):
         key = f"{m.group(1)}[{m.group(2)}]"
-        calc_values[key] = float(m.group(3))
+        try:
+            calc_values[key] = float(m.group(3))
+        except ValueError:
+            pass
 
     return TestResult(
         name               = letter,
