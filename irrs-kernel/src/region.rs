@@ -1,5 +1,17 @@
 /// Kernel V8 — Region Establishment
 ///
+/// Region establishment is the precondition for declaring directed relations
+/// through M. Before a relation can be declared as a primitive, the observable
+/// region in which it exists must be identified, bounded, and admitted. A
+/// relation declared outside an established region has no grounding in the
+/// bounded domain — one of the three characteristics from which the primitive
+/// itself derives.
+///
+/// The primitive is defined in `lib.rs`. Region establishment is its
+/// prerequisite, not its product.
+///
+/// ───────────────────────────────────────────────────────────────────────────
+///
 /// Regional context is a prerequisite to topology instantiation.
 /// No topology or operator may be instantiated without a verified region.
 ///

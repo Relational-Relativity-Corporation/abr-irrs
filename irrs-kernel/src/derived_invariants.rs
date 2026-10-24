@@ -1,16 +1,22 @@
 /// Kernel V8 — Derived Invariants, Part I (Confirmed)
 ///
+/// The quantities in this file are produced by the operators acting on declared
+/// directed relations. They do not exist independently of that process. Each
+/// one is readable only after a complete operator chain has acted on a declared
+/// relational structure — and its numerical existence alone does not establish
+/// correspondence with the observable. Correspondence is declared through M.
+///
+/// The primitive that makes these quantities possible is defined in `lib.rs`.
+///
+/// ───────────────────────────────────────────────────────────────────────────
+///
 /// This file is `derived_invariants.rs`. What is produced is here.
 /// Operators are in `operators.rs`. What acts is there.
 /// Do not add operators to this file.
 ///
-/// Part I quantities are confirmed invariants. They are readable only after
-/// the operators act. A Layer 3 result is compared with observables through M;
-/// its numerical existence alone does not establish correspondence.
-///
-/// Part II statements (open derivation) are NOT in this file. Part II
-/// statements may not be cited as proven consequences of the operators.
-///
+/// Part I quantities are confirmed invariants.
+/// Part II statements (open derivation) are NOT in this file and may not be
+/// cited as proven consequences of the operators.
 /// Nothing in Part I depends on any statement in Part II.
 ///
 /// Frozen at Kernel V8. No modification is authorized.

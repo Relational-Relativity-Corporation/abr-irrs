@@ -1,9 +1,22 @@
 /// Kernel V8 — Canonical Relational Operators
 ///
-/// Implements the operator forms from `kernel_reference.md`, sections 11–12.
+/// The operators in this file exist because of one primitive: a directed
+/// relation declared from observable information. They cannot be applied to
+/// anything that was not declared through M, and they produce no output that
+/// carries meaning beyond the declared boundary.
+///
+/// The primitive is defined in `lib.rs`. Read it first.
+///
+/// ───────────────────────────────────────────────────────────────────────────
+///
 /// This file is `operators.rs`. What acts is here.
 /// Derived invariants are in `derived_invariants.rs`. What is produced is there.
 /// Do not add derived invariants to this file.
+///
+/// The operator chain is A → B → R (ABR kernel) or Δ → Σ (primary kernel).
+/// Neither chain is independent of the declared directed relations that precede
+/// it. `DeclaredRelations` is not an input container — it is the primitive
+/// itself, encoded as a structure the operators can act on.
 ///
 /// Frozen at Kernel V8. No modification is authorized.
 /// Where this file and `kernel_reference.md` differ, this file governs.
@@ -30,7 +43,17 @@ pub enum EdgeProvenance {
 
 // ─── DeclaredRelations ───────────────────────────────────────────────────────
 
-/// Declared relational structure.
+/// The foundational primitive encoded as a structure.
+///
+/// `DeclaredRelations` is the directed observable relation made available for
+/// operator action. It is not a convenience wrapper or an input container.
+/// It is the primitive itself — the thing without which no operator in this
+/// file has meaning or can be applied.
+///
+/// Every edge in `DeclaredRelations` must carry a declared provenance: the
+/// observable or physical basis from which the relation was declared through M.
+/// An edge without provenance is a fabrication within D and is rejected at
+/// construction.
 ///
 /// Production constructor — requires explicit provenance for every edge.
 /// `Persistence` edges are not declared here; use `PersistenceState`.
