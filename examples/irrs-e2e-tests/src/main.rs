@@ -508,7 +508,7 @@ fn mock_eval_record(
 
 // ─── Test F — Observable provenance ADMITTED ─────────────────────────────────
 
-fn test_f() {
+fn test_f() -> bool {
     separator("TEST F — Observable provenance ADMITTED (Origin-authorized EvaluationRecord)");
     println!();
     println!("  Governing condition: every admitted result must be traceable to declared");
@@ -577,16 +577,18 @@ fn test_f() {
             let pass = prov_admitted && chain_complete;
             println!("  TEST F: {} — admitted result carries verifiable observable provenance.",
                 if pass { "PASS" } else { "FAIL" });
+            pass
         }
         other => {
             println!("  TEST F: FAIL — unexpected output: {:?}", std::mem::discriminant(other));
+            false
         }
     }
 }
 
 // ─── Test G — Observable provenance OPEN (basis not declared) ────────────────
 
-fn test_g() {
+fn test_g() -> bool {
     separator("TEST G — Observable provenance OPEN (no EvaluationRecord supplied)");
     println!();
     println!("  When declare_observable_basis is not called, the session proceeds with");
@@ -635,16 +637,18 @@ fn test_g() {
             let pass = obs_prov.is_none() && basis_open;
             println!("  TEST G: {} — undeclared basis surfaces as OPEN; execution permitted experimentally.",
                 if pass { "PASS" } else { "FAIL" });
+            pass
         }
         other => {
             println!("  TEST G: FAIL — unexpected output: {:?}", std::mem::discriminant(other));
+            false
         }
     }
 }
 
 // ─── Test H — Observable provenance OPEN (evaluated, awaiting authorization) ──
 
-fn test_h() {
+fn test_h() -> bool {
     separator("TEST H — Observable provenance OPEN (evaluated; Origin review pending)");
     println!();
     println!("  When an EvaluationRecord has status PassedAwaitingAuthorization, the");
@@ -690,55 +694,56 @@ fn test_h() {
             let pass = status_pending && no_auth;
             println!("  TEST H: {} — evaluated but unauthorized; execution permitted; provenance OPEN.",
                 if pass { "PASS" } else { "FAIL" });
+            pass
         }
         other => {
             println!("  TEST H: FAIL — unexpected output: {:?}", std::mem::discriminant(other));
+            false
         }
     }
 }
 
-// ─── Test I — Observable provenance REJECTED (failed evaluation) ─────────────
+// ─── Test I — Observable provenance REJECTED (EvaluationRecord::Failed enforced) ──
 //
-// This is the critical test: an AI-generated calculation that introduces an
-// undeclared mathematical operation must not receive admission, even if its
-// numerical result is correct.
+// This is the critical test: the session must reject an EvaluationRecord
+// already marked Failed, regardless of whether the supplied inputs would
+// otherwise produce a correct numerical result.
 //
-// Scenario: The Generator (an AI) runs a preprocessing step that squares the
-// node field values before passing them to the session: [3, 5, 2] → [9, 25, 4].
-// The declaration claims "direct sensor reading" — but the actual values went
-// through an undeclared elementwise square.
+// What this test demonstrates:
+//   An EvaluationRecord is constructed with EvaluationStatus::Failed and a
+//   failure_reason documenting that the declared acquisition_method
+//   ("direct sensor reading") is inconsistent with a transformation the
+//   Generator applied (elementwise squaring: x'[i] = sensor[i]^2).
 //
-// The irrs-eval Evaluator, running independently of the Generator, detects
-// the inconsistency between the declared acquisition_method and the
-// transformation_history, and produces EvaluationStatus::Failed.
+//   The session's role is enforcement, not evaluation. It checks the status
+//   field of the supplied EvaluationRecord and blocks execution when that
+//   status is Failed. The determination of what caused the failure belongs
+//   to the Evaluator and Origin, not to the session.
 //
-// Result: the session blocks execution entirely. The operator chain does not run.
-// The "correct" numerical result is not admitted — because the derivation is
-// not traceable to the declared observable basis.
+//   I-3 uses inputs IDENTICAL to the admitted baseline (I-1). The session
+//   blocks them because the EvaluationRecord is Failed. Correct arithmetic
+//   is not sufficient evidence of traceable observable relational provenance.
 
-fn test_i() {
-    separator("TEST I — Observable provenance REJECTED (AI-introduced undeclared operation)");
+fn test_i() -> bool {
+    separator("TEST I — Observable provenance REJECTED (EvaluationRecord::Failed enforced)");
     println!();
-    println!("  CRITICAL TEST: An AI-generated calculation that introduces an undeclared");
-    println!("  mathematical operation must not receive admission, even if its numerical");
-    println!("  result is correct.");
+    println!("  CRITICAL TEST: The session must reject an EvaluationRecord already");
+    println!("  marked Failed, regardless of whether the supplied inputs would");
+    println!("  otherwise produce a correct numerical result.");
     println!();
-    println!("  Scenario:");
-    println!("    — Declared observable basis: sensor readings at nodes 0, 1, 2.");
-    println!("    — Authorized M mapping: direct field projection x[i] = sensor[i].");
-    println!("    — Expected admitted inputs: [3.0, 5.0, 2.0] (direct readings).");
-    println!();
-    println!("    — Generator (AI) introduces an undeclared preprocessing step:");
-    println!("        x'[i] = sensor[i]^2  →  [9.0, 25.0, 4.0]");
-    println!("      This transformation is NOT in the authorized M mapping.");
-    println!("      The declaration claims 'direct sensor reading'.");
-    println!();
-    println!("    — The irrs-eval Evaluator, running independently, detects the");
-    println!("      inconsistency and produces EvaluationStatus::Failed.");
-    println!();
-    println!("  The session must block execution regardless of whether the");
-    println!("  numerical result would otherwise be computable. Correct arithmetic");
-    println!("  is not evidence of traceable provenance.");
+    println!("  What this test demonstrates:");
+    println!("    — An EvaluationRecord is constructed with EvaluationStatus::Failed.");
+    println!("      The failure_reason documents that the declared acquisition_method");
+    println!("      (\"direct sensor reading\") is inconsistent with an undeclared");
+    println!("      transformation the Generator applied: x'[i] = sensor[i]^2.");
+    println!("    — The session's role is enforcement, not evaluation.");
+    println!("      It checks the status field of the supplied EvaluationRecord");
+    println!("      and blocks execution when that status is Failed.");
+    println!("      The determination of what caused the failure belongs to the");
+    println!("      Evaluator and Origin, not to the session.");
+    println!("    — I-3 uses inputs IDENTICAL to the admitted baseline (I-1).");
+    println!("      The session blocks them because the EvaluationRecord is Failed.");
+    println!("      Correct arithmetic is not evidence of traceable provenance.");
 
     // I-1: Reference — what the authorized computation would produce.
     println!();
@@ -766,7 +771,7 @@ fn test_i() {
             }
             other => {
                 println!("  I-1: FAIL — unexpected: {:?}", std::mem::discriminant(other));
-                return;
+                return false;
             }
         }
     }
@@ -804,27 +809,26 @@ fn test_i() {
         }
     }
 
-    // I-3: The critical test — failed evaluation record blocks execution.
+    // I-3: The critical test — a Failed EvaluationRecord blocks execution.
     //
-    // Even when using the ORIGINAL authorized inputs [3.0, 5.0, 2.0], if the
-    // EvaluationRecord reports Failed (simulating what would happen if the
-    // Evaluator detected an undeclared transformation in the declaration), the
-    // session blocks. Correct arithmetic is not admitted without traceable provenance.
+    // The SAME inputs as the admitted baseline (I-1) are supplied, paired with
+    // an EvaluationRecord already marked Failed. The session enforces the status
+    // it receives; it does not independently evaluate the declaration.
     println!();
     println!("  I-3: CRITICAL — Failed EvaluationRecord blocks execution");
-    println!("       Even using original inputs [3.0, 5.0, 2.0], a Failed evaluation");
-    println!("       record (what the Evaluator would return upon detecting the undeclared");
-    println!("       squaring transformation in the declaration) blocks admission entirely.");
+    println!("       The same inputs as I-1 ([3.0, 5.0, 2.0]) are supplied, paired");
+    println!("       with an EvaluationRecord already marked Failed. The session");
+    println!("       enforces the status it receives: it does not independently");
+    println!("       evaluate the declaration.");
     {
         let failed_record = mock_eval_record(
             EvaluationStatus::Failed,
             Some(
-                "Undeclared mathematical transformation detected. \
-                 The declaration specifies acquisition_method: 'direct sensor reading'. \
-                 The transformation_history indicates values were squared before submission \
-                 (x'[i] = sensor[i]^2). This transformation is not in the authorized M mapping \
-                 and was not declared by Origin. The derivation is not traceable to the \
-                 declared observable basis. Admission is inadmissible.".to_string()
+                "Declared acquisition_method is 'direct sensor reading', but \
+                 transformation_history indicates values were squared before submission \
+                 (x'[i] = sensor[i]^2). This transformation is not in the authorized \
+                 M mapping and was not declared by Origin. The derivation is not \
+                 traceable to the declared observable basis.".to_string()
             ),
             false,
         );
@@ -891,12 +895,14 @@ fn test_i() {
                 println!("  of traceable observable relational provenance.");
                 println!();
                 let pass = rejected_at_admit;
-                println!("  TEST I: {} — undeclared AI transformation rejected; arithmetic correctness",
+                println!("  TEST I: {} — Failed EvaluationRecord blocks execution; correct arithmetic",
                     if pass { "PASS" } else { "FAIL" });
                 println!("           is not a substitute for verifiable provenance.");
+                pass
             }
             other => {
                 println!("  TEST I: FAIL — expected Blocked, got {:?}", std::mem::discriminant(other));
+                false
             }
         }
     }
@@ -925,10 +931,10 @@ fn main() {
     println!("  traceable to declared observable relational provenance.");
     println!("  A correct numerical result is not sufficient evidence of that derivation.");
 
-    test_f();
-    test_g();
-    test_h();
-    test_i();
+    let f = test_f();
+    let g = test_g();
+    let h = test_h();
+    let i = test_i();
 
     println!();
     println!("╔═══════════════════════════════════════════════════════╗");
@@ -941,16 +947,21 @@ fn main() {
     println!("    ✓ Test C — Observational comparison PASS + CORRESPONDENCE FAILED");
     println!("    ✓ Test D — Domain incompleteness: missing ρ, topology, field");
     println!("    ✓ Test E — Persistence OPEN requirement documented");
-    println!("    ✓ Test F — Observable provenance ADMITTED (Origin-authorized record)");
-    println!("    ✓ Test G — Observable provenance OPEN (basis not declared)");
-    println!("    ✓ Test H — Observable provenance OPEN (evaluated; awaiting Origin review)");
-    println!("    ✓ Test I — Observable provenance REJECTED (undeclared AI transformation)");
+    println!("    {} Test F — Observable provenance ADMITTED (Origin-authorized record)",
+        if f { "✓" } else { "✗" });
+    println!("    {} Test G — Observable provenance OPEN (basis not declared)",
+        if g { "✓" } else { "✗" });
+    println!("    {} Test H — Observable provenance OPEN (evaluated; awaiting Origin review)",
+        if h { "✓" } else { "✗" });
+    println!("    {} Test I — Observable provenance REJECTED (EvaluationRecord::Failed enforced)",
+        if i { "✓" } else { "✗" });
     println!();
     println!("  CRITICAL FINDING — Test I:");
-    println!("    An AI-generated calculation introducing an undeclared mathematical");
-    println!("    transformation does not receive admission, even when the inputs are");
-    println!("    identical to those used in the admitted baseline. A correct numerical");
-    println!("    result is not evidence of traceable observable relational provenance.");
+    println!("    A session supplied with an EvaluationRecord already marked Failed");
+    println!("    blocks execution, even when the inputs are identical to those used");
+    println!("    in the admitted baseline (I-1). The session enforces the status it");
+    println!("    receives; it does not independently evaluate the declaration.");
+    println!("    A correct numerical result is not evidence of traceable provenance.");
     println!();
     println!("  Remaining OPEN requirements:");
     println!("    ① OPEN INTEGRATION REQUIREMENT E-1:");
@@ -969,4 +980,11 @@ fn main() {
     println!();
     println!("Bounded over D. No claim beyond D.");
     println!("Metatron Dynamics, Inc. | Kernel V8 frozen.");
+
+    // Exit nonzero if any provenance test failed.
+    // Tests A–E do not return bool; their failures surface as printed output.
+    // Tests F–I return bool; process exit propagates failures to the caller.
+    if !(f && g && h && i) {
+        std::process::exit(1);
+    }
 }
