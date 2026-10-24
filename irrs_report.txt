@@ -1,0 +1,129 @@
+========================================================================
+IRRS ORCHESTRATOR — CONSOLIDATED REPORT
+Origin–Generator–Verifier Triad | Kernel V8 | V0.1
+========================================================================
+Generated : 2026-10-24T03:39:19Z
+Repository: https://github.com/Relational-Relativity-Corporation/abr-irrs
+
+------------------------------------------------------------------------
+§1  REPOSITORY COMMIT AND EXECUTION ENVIRONMENT
+------------------------------------------------------------------------
+  Authorized commit : 1400d3bb33767a53a393346ab9dcf1fa5a3aa155
+  Actual HEAD       : 454845c27f13d0386d33891124af927be05df533
+  Commit matches    : True
+  Working tree      : clean
+  Python            : 3.13.17
+  Cargo             : cargo 1.97.0 (c980f4866 2026-06-30)
+  Platform          : linux
+  Execution start   : 2026-10-24T03:39:19Z
+  Execution finish  : 2026-10-24T03:39:19Z
+  Duration          : 0.056s
+  stdout SHA256     : 226c1eee3bec4d08a562ff24776de72dec4215e1cbfae84dd41b5b039b56e102
+
+------------------------------------------------------------------------
+§2  TESTS EXECUTED AND EXIT CODES
+------------------------------------------------------------------------
+  Rust test crate   : irrs-e2e-tests
+  Command           : cargo run -p irrs-e2e-tests
+  Exit code         : 0
+  Timed out         : False
+
+  Test A: PASS    TEST A: PASS — A and B computed correctly; R OPEN as expected; no fabricated parameters.
+  Test B: PASS    TEST B: PASS — complete A→B→R executed with illustrative parameters; OPEN conditions surfaced.
+  Test C: PASS    Test C: sub-tests PASS, PASS
+  Test D: PASS    Test D: sub-tests PASS, PASS, PASS
+  Test E: OPEN    Test E: OPEN INTEGRATION REQUIREMENT E-1 — see open_conditions
+
+------------------------------------------------------------------------
+§3  DECLARED INPUTS AND MAPPING PROVENANCE
+------------------------------------------------------------------------
+  Topology          : 3 nodes, 2 edges (e0: 0→1 Continuation, e1: 1→2 Continuation)
+  Node field        : x = [3.0, 5.0, 2.0] (1 component)
+  ρ_base            : 0.8  [ILLUSTRATIVE — Test B/C only; domain-specific]
+  χ₀                : 1.0  [ILLUSTRATIVE — Test B/C only; domain-specific]
+  Provenance states : Illustrative → EvidenceDeclared → ObservationallyVerified
+                      (Not interchangeable per Kernel V8)
+
+------------------------------------------------------------------------
+§4  CALCULATED OUTPUTS AND OPERATOR TRACES
+------------------------------------------------------------------------
+  Test A calculated values:
+    A[c=0,e0] = -2.0
+    A[c=0,e1] = 3.0
+    B[c=0,e0] = 1.0
+    B[c=0,e1] = 3.0
+    A[e0] = -2.0
+    A[e1] = 3.0
+    B[e0] = 1.0
+    B[e1] = 3.0
+  Test B calculated values:
+    R[e0] = 2.6
+    R[e1] = 2.4
+  Test C calculated values:
+    R[e0] = 2.6
+    R[e1] = 2.4
+  Test A: A[e0]=-2.0, A[e1]=3.0, B[e0]=1.0, B[e1]=3.0  | R: OPEN (RhoNotDeclared)
+  Test B: A[e0]=-2.0, A[e1]=3.0, B[e0]=1.0, B[e1]=3.0  | R[e0]=2.6, R[e1]=2.4 [ILLUSTRATIVE]
+  Test C (C-1): R[e0]=2.6, R[e1]=2.4  | observed match — PASS
+  Test C (C-2): R[e0]=2.6 calculated  | observed=99.0 — CORRESPONDENCE FAILED; kernel not rewritten
+  Test D: D-1 Partial; D-2 Blocked (no topology); D-3 Blocked (no field)
+  Test E: A→B→R spatial path executes; PersistenceState across sessions — OPEN E-1
+
+------------------------------------------------------------------------
+§5  INDEPENDENT VERIFICATION FINDINGS
+------------------------------------------------------------------------
+  Verifier model    : gpt-4o
+  Prompt SHA256     : …
+  Conformance       : OPEN
+  Invoked at        : 2026-10-24T03:39:19Z
+  Indep. repro      : NO — OPEN
+
+  Verifier response (full):
+    [OPEN] OPENAI_API_KEY not set — Verifier not invoked.
+
+------------------------------------------------------------------------
+§6  OBSERVATIONAL CORRESPONDENCE
+------------------------------------------------------------------------
+  C-1: R[e0]=2.6 vs observed=2.6  residual=0  tol=1e-6  [PASS]
+  C-2: R[e0]=2.6 vs observed=99.0 residual=96.4          [CORRESPONDENCE FAILED]
+  All tests: synthetic fixtures only — physical domain NOT YET READY
+
+------------------------------------------------------------------------
+§7  REJECTED / BLOCKED / OPEN CONDITIONS
+------------------------------------------------------------------------
+  BLOCKED:
+    Blocked with TopologyNotDeclared: ✓
+    Blocked with NodeFieldNotDeclared: ✓
+
+  OPEN:
+    ① RhoMaxSelectionRule  — χ magnitude selection across components
+    ② RhoSaturatingForm    — saturating form ρ=ρ_base·χ/(χ₀+χ) not
+    ① OPEN INTEGRATION REQUIREMENT E-1:
+    OPEN: The session layer executes the spatial A→B→R path.
+    This is recorded as: OPEN INTEGRATION REQUIREMENT E-1
+
+  OPEN INTEGRATION REQUIREMENT E-1:
+    Session API does not expose PersistenceState across calls.
+    operator_e_v5 and PersistenceState exist in irrs-kernel.
+    Gap is the session layer, not the kernel.
+
+  VERIFIER OPEN ITEMS:
+    OPENAI_API_KEY not set. Set the environment variable and re-run to invoke the independent Verifier.
+    Independent Rust execution not available in Verifier environment.
+
+------------------------------------------------------------------------
+§8  GENERATOR–VERIFIER DISAGREEMENT
+------------------------------------------------------------------------
+  NONE — no disagreements recorded.
+
+------------------------------------------------------------------------
+§9  NEXT ACTION REQUIRING ORIGIN AUTHORIZATION
+------------------------------------------------------------------------
+  1. OPEN E-1: Authorize session-layer PersistenceState integration or defer.
+  2. Physical domain: Supply real observable D and M declarations to advance beyond synthetic fixtures.
+  3. Independent Rust reproduction: Run `cargo run -p irrs-e2e-tests` on local machine (C:\Users\Robin Macomber\Documents\Metatron_Dynamics\GitHub_Repos\abr-irrs) and supply output to confirm independent execution.
+
+========================================================================
+Bounded over D. No claim beyond D.
+Metatron Dynamics, Inc. | Kernel V8 frozen | Orchestrator V0.1
+========================================================================
