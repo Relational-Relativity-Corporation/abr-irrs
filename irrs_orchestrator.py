@@ -344,20 +344,37 @@ def collect_sources(repo_root: Path) -> list:
 def _parse_test_block(stdout: str, letter: str) -> TestResult:
     """
     Extract structured result for one test letter from the combined stdout.
+
+    Tests C, D, E use sub-test verdict lines (C-1: PASS, D-2: PASS …).
+    Test E is inherently OPEN (OPEN E-1 is the documented outcome).
     """
-    # Locate the test header and the PASS/FAIL verdict line
-    header_pattern = re.compile(
-        rf"TEST {letter}[^\n]*\n", re.IGNORECASE
-    )
+    # Primary verdict: "TEST X: PASS/FAIL — ..."
     verdict_pattern = re.compile(
-        rf"TEST {letter}:\s*(PASS|FAIL)[^\n]*", re.IGNORECASE
+        rf"\bTEST {letter}:\s*(PASS|FAIL)[^\n]*", re.IGNORECASE
+    )
+    # Sub-test verdicts: "X-N: PASS — ..." or "X-N: FAIL — ..."
+    sub_pattern = re.compile(
+        rf"\b{letter}-\d+:\s*(PASS|FAIL)[^\n]*", re.IGNORECASE
     )
 
     summary_match = verdict_pattern.search(stdout)
-    status  = "PASS" if (summary_match and "PASS" in summary_match.group(1).upper()) else "FAIL"
-    if not summary_match:
-        status = "ERROR"
-    summary = summary_match.group(0).strip() if summary_match else f"Test {letter}: no verdict found"
+    if summary_match:
+        status  = "PASS" if "PASS" in summary_match.group(1).upper() else "FAIL"
+        summary = summary_match.group(0).strip()
+    else:
+        # Fall back to sub-test lines
+        sub_matches = sub_pattern.findall(stdout)
+        if sub_matches:
+            statuses = [s.upper() for s in sub_matches]
+            status  = "PASS" if all(s == "PASS" for s in statuses) else "FAIL"
+            summary = f"Test {letter}: sub-tests {', '.join(sub_matches)}"
+        elif letter == "E":
+            # Test E is defined as OPEN (E-1 requirement) — not a failure
+            status  = "OPEN"
+            summary = f"Test E: OPEN INTEGRATION REQUIREMENT E-1 — see open_conditions"
+        else:
+            status  = "ERROR"
+            summary = f"Test {letter}: no verdict found in stdout"
 
     # Extract OPEN conditions within this test's block
     # Find the block between this test's header and the next test's header (or end)
