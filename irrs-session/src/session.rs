@@ -24,6 +24,7 @@ use irrs_kernel::operators::{
     compute_rho,
     require_rho_declaration, require_cc_declaration,
 };
+use irrs_eval::record::{EvaluationRecord, EvaluationStatus};
 
 use crate::admission::{
     AdmissionResult, EvaluatedComparison, ExecutionResult, KernelOpenCondition,
@@ -36,32 +37,49 @@ use crate::admission::{
 /// Interactive session for D/M-driven relational computation.
 ///
 /// Workflow:
-///   1. `declare_topology` — supply DeclaredRelations
-///   2. `declare_field`    — supply NodeField
-///   3. `declare_rho`      — supply ρ_base, χ₀, and ParameterProvenance
-///                           (ObservationallyEstablished requires EvidenceRecord)
-///   4. `declare_cc`       — supply cross-topology coupling (may be empty)
-///   5. `admit`            — check prerequisites; inspect OpenConditions if any
-///   6. `execute`          — run frozen Kernel V8 operators; get SessionOutput
-///   7. `trace_report`     — print mathematical trace and provenance
+///   1. `declare_topology`          — supply DeclaredRelations
+///   2. `declare_field`             — supply NodeField
+///   3. `declare_rho`               — supply ρ_base, χ₀, and ParameterProvenance
+///                                    (ObservationallyEstablished requires EvidenceRecord)
+///   4. `declare_cc`                — supply cross-topology coupling (may be empty)
+///   5. `declare_observable_basis`  — supply Origin-authorized EvaluationRecord
+///                                    (omit to proceed with OPEN observable provenance)
+///   6. `admit`                     — check prerequisites; inspect OpenConditions if any
+///   7. `execute`                   — run frozen Kernel V8 operators; get SessionOutput
+///   8. `trace_report`              — print mathematical trace and provenance
+///
+/// Observable relational provenance (step 5):
+///   Supply the `EvaluationRecord` produced by `irrs_eval::Evaluator::evaluate`
+///   after Origin has reviewed and committed `eval/authorization.json`.
+///
+///   - `EvaluationStatus::Authorized`                → observable provenance ADMITTED
+///   - `EvaluationStatus::PassedAwaitingAuthorization` → OPEN; Origin review pending
+///   - `EvaluationStatus::Failed`                    → execution BLOCKED; derivation
+///     inadmissible. A failed evaluation means the provenance chain is broken; no
+///     part of the operator chain is admitted.
+///   - (not called)                                  → OPEN; basis undeclared
 pub struct Session {
-    rel:   Option<DeclaredRelations>,
-    field: Option<NodeField>,
+    rel:              Option<DeclaredRelations>,
+    field:            Option<NodeField>,
     /// (ρ_base, χ₀, provenance)
-    rho:   Option<(f64, f64, ParameterProvenance)>,
-    cc:    Vec<f64>,
-    pairs: Vec<(usize, usize)>,
+    rho:              Option<(f64, f64, ParameterProvenance)>,
+    cc:               Vec<f64>,
+    pairs:            Vec<(usize, usize)>,
+    /// Origin-authorized observable relational provenance record.
+    /// None → basis not declared (OPEN).
+    observable_basis: Option<EvaluationRecord>,
 }
 
 impl Session {
     /// Create an empty session. No declarations are present.
     pub fn new() -> Self {
         Session {
-            rel:   None,
-            field: None,
-            rho:   None,
-            cc:    vec![],
-            pairs: vec![],
+            rel:              None,
+            field:            None,
+            rho:              None,
+            cc:               vec![],
+            pairs:            vec![],
+            observable_basis: None,
         }
     }
 
@@ -110,6 +128,22 @@ impl Session {
     pub fn declare_cc(&mut self, cc: Vec<f64>, pairs: Vec<(usize, usize)>) {
         self.cc    = cc;
         self.pairs = pairs;
+    }
+
+    /// Declare the observable relational provenance basis for this session.
+    ///
+    /// Supply the `EvaluationRecord` produced by `irrs_eval::Evaluator::evaluate`
+    /// after Origin has reviewed and committed `eval/authorization.json`.
+    ///
+    /// This is step 5 of the session workflow. It is optional: omitting it
+    /// allows execution to proceed with `OpenCondition::ObservableBasisNotDeclared`.
+    /// A record with `EvaluationStatus::Failed` blocks execution entirely —
+    /// see `SessionOutput::Blocked(OpenCondition::ObservableProvenanceRejected)`.
+    ///
+    /// The `EvaluationRecord` is threaded into the `ExecutionResult` so every
+    /// admitted result carries a verifiable link to its declared observable basis.
+    pub fn declare_observable_basis(&mut self, record: EvaluationRecord) {
+        self.observable_basis = Some(record);
     }
 
     // ─── Kernel OPEN conditions ───────────────────────────────────────────────
@@ -225,10 +259,40 @@ impl Session {
             open.push(OpenCondition::RhoNotDeclared);
         }
 
-        if open.is_empty() {
+        // Check observable relational provenance.
+        // A Failed evaluation blocks execution; surface the reason here.
+        // An absent basis is OPEN (not blocking) — noted as ObservableBasisNotDeclared.
+        match &self.observable_basis {
+            None => {
+                open.push(OpenCondition::ObservableBasisNotDeclared);
+            }
+            Some(record) if record.status == EvaluationStatus::Failed => {
+                open.push(OpenCondition::ObservableProvenanceRejected(
+                    record.failure_reason.clone().unwrap_or_else(|| {
+                        "EvaluationRecord status: Failed (no failure_reason provided)".to_string()
+                    })
+                ));
+            }
+            _ => {}
+        }
+
+        if open.iter().any(|c| matches!(c, OpenCondition::ObservableProvenanceRejected(_))) {
+            // A failed evaluation is a hard block — like SyntheticViolation in irrs-eval.
+            return AdmissionResult::Open(open);
+        }
+
+        // ObservableBasisNotDeclared is present in open but does NOT block Admitted.
+        // The session can proceed experimentally with OPEN provenance.
+        let structural_open: Vec<OpenCondition> = open.iter()
+            .filter(|c| !matches!(c, OpenCondition::ObservableBasisNotDeclared))
+            .cloned()
+            .collect();
+
+        if structural_open.is_empty() {
             AdmissionResult::Admitted {
-                parameter_provenance: self.rho.as_ref().unwrap().2.clone(),
-                kernel_open:          Self::kernel_open_conditions(),
+                parameter_provenance:  self.rho.as_ref().unwrap().2.clone(),
+                kernel_open:           Self::kernel_open_conditions(),
+                observable_provenance: self.observable_basis.clone(),
             }
         } else {
             AdmissionResult::Open(open)
@@ -242,10 +306,16 @@ impl Session {
     /// Returns `SessionOutput`:
     ///   `Complete`  — all prerequisites met; full A→B→R executed
     ///   `Partial`   — topology and field declared, ρ unmet; A and B computed
-    ///   `Blocked`   — missing declarations or validation failure; nothing computed
+    ///   `Blocked`   — missing declarations, validation failure, or rejected
+    ///                 observable provenance; nothing computed
     ///
     /// When ρ is not declared but topology and field are present, A and B are
     /// computed and returned in `Partial`. R is not fabricated.
+    ///
+    /// When `declare_observable_basis` was called with a record whose status is
+    /// `EvaluationStatus::Failed`, execution is blocked entirely — A, B, and R are
+    /// all withheld. A failed provenance evaluation means the derivation's observable
+    /// basis is inadmissible; no part of the operator chain is admitted.
     ///
     /// Detection indicators 𝟙[e] are evaluated across ALL declared components
     /// and ALL edges. DETECTION_TOLERANCE is explicit; see its documentation
@@ -254,6 +324,26 @@ impl Session {
     /// The kernel operators are called unchanged. No operator mathematics
     /// are implemented in this crate.
     pub fn execute(&self) -> SessionOutput {
+        // Step 0: check observable provenance rejection before any operator executes.
+        //
+        // A Failed EvaluationRecord means the declared basis is inadmissible. The
+        // operator chain does not run, regardless of whether structural prerequisites
+        // are met. This is the enforcement boundary for the Relational Primitive
+        // Provenance Invariant: a correct numerical result is not sufficient evidence
+        // that the derivation is traceable to declared observable relations.
+        if let Some(record) = &self.observable_basis {
+            if record.status == EvaluationStatus::Failed {
+                return SessionOutput::Blocked(vec![
+                    OpenCondition::ObservableProvenanceRejected(
+                        record.failure_reason.clone().unwrap_or_else(|| {
+                            "EvaluationRecord status: Failed (no failure_reason provided)"
+                                .to_string()
+                        })
+                    )
+                ]);
+            }
+        }
+
         // Step 1: pre-execution validation (dimensions, ρ admissibility).
         let validation_errors = self.validate();
         if !validation_errors.is_empty() {
@@ -346,12 +436,16 @@ impl Session {
             _ => vec![],
         };
 
+        // Clone the observable_provenance once for use in both branches.
+        let observable_provenance = self.observable_basis.clone();
+
         if all_zero {
             SessionOutput::Complete(ExecutionResult::CalculatedZero {
                 edge_field:            r,
                 parameter_provenance:  prov,
                 kernel_open,
                 evaluated_comparisons,
+                observable_provenance,
             })
         } else {
             SessionOutput::Complete(ExecutionResult::RelationalOutput {
@@ -360,6 +454,7 @@ impl Session {
                 detection_indicators,
                 kernel_open,
                 evaluated_comparisons,
+                observable_provenance,
             })
         }
     }
@@ -509,6 +604,53 @@ impl Session {
         } else {
             println!("  M-SUPPLIED PARAMETERS  [not declared]");
             println!("    ρ_base and χ₀ are domain-specific and must be declared.");
+        }
+
+        // Observable relational provenance
+        println!();
+        match &self.observable_basis {
+            None => {
+                println!("  OBSERVABLE RELATIONAL PROVENANCE  [OPEN — basis not declared]");
+                println!("    No EvaluationRecord supplied. The derivation is not traceable to a");
+                println!("    declared observable basis. To establish provenance:");
+                println!("      1. Run irrs_eval::Evaluator::evaluate on a Declaration.");
+                println!("      2. Have Origin review and commit eval/authorization.json.");
+                println!("      3. Call Session::declare_observable_basis with the EvaluationRecord.");
+            }
+            Some(record) => {
+                use irrs_eval::record::EvaluationStatus;
+                let status_label = match &record.status {
+                    EvaluationStatus::Authorized => "ADMITTED — Origin authorized",
+                    EvaluationStatus::PassedAwaitingAuthorization =>
+                        "OPEN — evaluated; awaiting Origin authorization",
+                    EvaluationStatus::Failed => "REJECTED — evaluation failed (should have blocked execution)",
+                };
+                println!("  OBSERVABLE RELATIONAL PROVENANCE  [{}]", status_label);
+                println!("    Record ID:          {}", record.record_id);
+                println!("    Domain:             {}", record.domain);
+                println!("    Topology ID:        {}", record.topology_id);
+                println!("    Declaration digest: {}", record.declaration_digest);
+                if let Some(auth) = &record.authorization {
+                    println!("    Authorized by:      {}", auth.authorized_by);
+                    println!("    Authorized at:      {}", auth.authorized_at);
+                    println!("    Statement:          {}", auth.statement);
+                }
+                if let Some(reason) = &record.failure_reason {
+                    println!("    Failure reason:     {}", reason);
+                }
+                let obs_count = record.input_inventory.iter()
+                    .filter(|i| matches!(i.classification,
+                        irrs_eval::record::InventoryKind::PrimaryObservable))
+                    .count();
+                println!("    Observable inputs:  {}", obs_count);
+                println!("    Total inputs:       {}", record.input_inventory.len());
+                if !record.evaluation_notes.is_empty() {
+                    println!("    Evaluation notes:");
+                    for note in &record.evaluation_notes {
+                        println!("      — {}", note);
+                    }
+                }
+            }
         }
 
         // Kernel OPEN conditions — always surfaced

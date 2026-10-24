@@ -20,6 +20,7 @@
 /// observational comparison not supplied by this layer.
 
 use irrs_kernel::operators::EdgeField;
+use irrs_eval::record::EvaluationRecord;
 
 // ─── Detection tolerance ─────────────────────────────────────────────────────
 
@@ -363,6 +364,26 @@ pub enum OpenCondition {
         topology_nodes: usize,
     },
     InvalidRhoParameter(String),
+
+    /// No `EvaluationRecord` was supplied via `Session::declare_observable_basis`.
+    ///
+    /// The session proceeds, but the result carries no observable relational
+    /// provenance. The derivation is OPEN with respect to observable basis.
+    /// To reach an admitted provenance state, run `irrs_eval::Evaluator::evaluate`
+    /// on a `Declaration`, have Origin review and commit authorization, and call
+    /// `Session::declare_observable_basis` with the resulting record.
+    ObservableBasisNotDeclared,
+
+    /// The supplied `EvaluationRecord` has `status: EvaluationStatus::Failed`.
+    ///
+    /// The evaluator determined that the declaration does not satisfy provenance
+    /// requirements. Execution is blocked. The failure reason is carried here
+    /// so the blocking cause is inspectable without reading the record itself.
+    ///
+    /// This blocks all operators — A, B, and R. A failed provenance evaluation
+    /// means the derivation's observable basis is inadmissible; no part of the
+    /// operator chain is admitted.
+    ObservableProvenanceRejected(String),
 }
 
 // ─── AdmissionResult ─────────────────────────────────────────────────────────
@@ -371,6 +392,22 @@ pub enum AdmissionResult {
     Admitted {
         parameter_provenance: ParameterProvenance,
         kernel_open:          Vec<KernelOpenCondition>,
+        /// The `EvaluationRecord` supplied via `Session::declare_observable_basis`,
+        /// if any.
+        ///
+        /// `None` → observable basis not declared; `OpenCondition::ObservableBasisNotDeclared`
+        /// is also present in conditions surfaced by `Session::admit()` when OPEN.
+        ///
+        /// `Some(record)` where `record.status == EvaluationStatus::Authorized` →
+        /// observable relational provenance ADMITTED; the record is the verifiable link
+        /// from this result back to the Origin-authorized declaration.
+        ///
+        /// `Some(record)` where `record.status == EvaluationStatus::PassedAwaitingAuthorization`
+        /// → declaration evaluated; Origin review pending; provenance OPEN.
+        ///
+        /// A record with `EvaluationStatus::Failed` never appears here — that status
+        /// blocks execution and surfaces as `OpenCondition::ObservableProvenanceRejected`.
+        observable_provenance: Option<EvaluationRecord>,
     },
     Open(Vec<OpenCondition>),
 }
@@ -389,6 +426,10 @@ pub enum ExecutionResult {
         /// `calculated` in each entry is the kernel's actual R value — not
         /// a caller-supplied value.
         evaluated_comparisons:  Vec<EvaluatedComparison>,
+        /// The Origin-authorized observable relational provenance record, if any.
+        /// `None` when `declare_observable_basis` was not called.
+        /// See `AdmissionResult::Admitted::observable_provenance` for full semantics.
+        observable_provenance:  Option<EvaluationRecord>,
     },
 
     /// R operator executed; antisymmetric term ≤ DETECTION_TOLERANCE on every
@@ -403,6 +444,8 @@ pub enum ExecutionResult {
         kernel_open:            Vec<KernelOpenCondition>,
         /// Same semantics as in RelationalOutput.
         evaluated_comparisons:  Vec<EvaluatedComparison>,
+        /// Same semantics as in RelationalOutput.
+        observable_provenance:  Option<EvaluationRecord>,
     },
 }
 

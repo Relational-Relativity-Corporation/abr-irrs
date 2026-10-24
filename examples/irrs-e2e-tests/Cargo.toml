@@ -7,3 +7,4 @@ description = "IRRS end-to-end test runner — Tests A through E (handoff Oct 23
 [dependencies]
 irrs-kernel  = { path = "../../irrs-kernel" }
 irrs-session = { path = "../../irrs-session" }
+irrs-eval    = { path = "../../irrs-eval" }

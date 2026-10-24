@@ -6,3 +6,4 @@ description = "IRRS interactive session: D/M declaration, kernel admission, and 
 
 [dependencies]
 irrs-kernel = { path = "../irrs-kernel" }
+irrs-eval   = { path = "../irrs-eval" }
