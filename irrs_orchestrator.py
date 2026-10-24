@@ -380,7 +380,6 @@ def _parse_test_block(stdout: str, letter: str) -> TestResult:
     # Find the block between this test's header and the next test's header (or end)
     letters = ["A", "B", "C", "D", "E"]
     idx     = letters.index(letter)
-    start_m = header_pattern.search(stdout)
     # Find the start of this test section more precisely
     section_start_re = re.compile(rf"TEST {letter} —", re.IGNORECASE)
     section_start = section_start_re.search(stdout)
